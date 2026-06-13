@@ -1,0 +1,62 @@
+# Builds DocC on push to main and deploys to GitHub Pages.
+#
+# ONE-TIME SETUP (the deploy step fails with "HttpError: Not Found" until done —
+# Pages must be enabled on the repo first):
+#
+#   gh api -X POST repos/mnmly/mlx-swift-vis/pages -f build_type=workflow
+#
+# or in the UI: Settings → Pages → Source → "GitHub Actions". Do this before the
+# first push to main so the initial deploy succeeds.
+#
+# The runner's Xcode docc lacks the experimental markdown flags, so this builds
+# the HTML site only (no llms.txt) — that export is a local, swiftly-toolchain extra.
+
+name: Build and deploy DocC
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macos-15 ships Xcode 16.x; it builds the package's macOS 14 deployment
+    # target fine. Use the default toolchain — don't hard-pin an Xcode_XX.app
+    # path (those drift per runner image and break silently).
+    runs-on: macos-15
+    env:
+      TARGETS: MLXVis
+      HOSTING_BASE_PATH: mlx-swift-vis
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build docs
+        run: ./Scripts/build_docs.sh
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
