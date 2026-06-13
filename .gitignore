@@ -1,0 +1,17 @@
+# Swift / SPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+.xcdd/
+
+# DocC build output (served from gh-pages / Actions, not main)
+/docs/
+
+# macOS
+.DS_Store
