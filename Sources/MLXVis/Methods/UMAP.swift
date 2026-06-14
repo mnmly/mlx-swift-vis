@@ -150,20 +150,9 @@ public final class UMAP {
         let colsMx = knnIndices.reshaped([-1]).asType(.int32)
         let valsMx = weights.reshaped([-1])
 
-        // Symmetrize on GPU: P = A + A^T - A * A^T via searchsorted key matching.
-        let nL = Int64(n)
-        let fwdKeys = rowsMx.asType(.int64) * nL + colsMx.asType(.int64)
-        let revKeys = colsMx.asType(.int64) * nL + rowsMx.asType(.int64)
-
-        let sortIdx = argSort(fwdKeys)
-        let sortedKeys = fwdKeys[sortIdx]
-        let sortedVals = valsMx[sortIdx]
-
-        var pos = searchSorted(sortedKeys, revKeys)
-        pos = minimum(pos, sortedKeys.dim(0) - 1)
-        let matched = sortedKeys[pos] .== revKeys
-        let wRev = MLX.where(matched, sortedVals[pos], 0.0)
-
+        // Symmetrize on GPU: P = A + A^T - A * A^T (fuzzy union), using the shared
+        // reverse-edge lookup primitive.
+        let wRev = reverseEdgeValues(rows: rowsMx, cols: colsMx, vals: valsMx, n: n)
         let wSym = valsMx + wRev - valsMx * wRev
 
         // Prune weak edges on CPU.

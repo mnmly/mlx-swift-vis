@@ -91,7 +91,7 @@ public final class DREAMS {
             xForKNN, k: k, method: knnMethod,
             returnEuclidean: false, randomState: randomState, verbose: verbose > 0)
 
-        let (edgeFrom, edgeTo, edgeWeights) = buildP(knnIndices, knnDists, n: n)
+        let (edgeFrom, edgeTo, edgeWeights) = buildPMatrix(knnIndices, knnDists, perplexity: perplexity, n: n)
         eval(edgeFrom, edgeTo, edgeWeights)
 
         // 2D PCA reference embedding Y_tilde (top nComponents of xForKNN).
@@ -112,84 +112,6 @@ public final class DREAMS {
         eval(y)
         self.embedding = y
         return y
-    }
-
-    // MARK: - P matrix (identical to t-SNE)
-
-    private func buildP(_ knnIndices: MLXArray, _ knnDists0: MLXArray, n: Int) -> (MLXArray, MLXArray, MLXArray) {
-        let k = knnIndices.dim(1)
-
-        let knnDists = knnDists0.asType(.float32)
-        let sqDists = knnDists * knnDists
-
-        var lo = MLXArray.full([n], values: MLXArray(Float(1e-20)))
-        var hi = MLXArray.full([n], values: MLXArray(Float(1e4)))
-        var beta = MLXArray.ones([n])
-        let targetH = Float(log(Double(perplexity)))
-
-        for _ in 0..<64 {
-            let logits = -beta.expandedDimensions(axis: 1) * sqDists
-            let logitsMax = logits.max(axis: 1, keepDims: true)
-            let shifted = logits - logitsMax
-            let expL = MLX.exp(shifted)
-            let sumExp = expL.sum(axis: 1)
-            let p = expL / sumExp.expandedDimensions(axis: 1)
-            let h = MLX.log(sumExp) - (p * shifted).sum(axis: 1)
-
-            let converged = abs(h - targetH) .< 1e-5
-            let tooHigh = (h .> targetH) & (.!converged)
-            let tooLow = (h .< targetH) & (.!converged)
-
-            let newLo = MLX.where(tooHigh, beta, lo)
-            let newHi = MLX.where(tooLow, beta, hi)
-            beta = MLX.where(tooHigh, MLX.where(newHi .< 1e4, (beta + newHi) / 2.0, beta * 2.0), beta)
-            beta = MLX.where(tooLow, MLX.where(newLo .> 1e-20, (newLo + beta) / 2.0, beta / 2.0), beta)
-            lo = newLo
-            hi = newHi
-            eval(beta)
-            if all(converged).item(Bool.self) { break }
-        }
-
-        let logits = -beta.expandedDimensions(axis: 1) * sqDists
-        let logitsMax = logits.max(axis: 1, keepDims: true)
-        let expL = MLX.exp(logits - logitsMax)
-        let sumExp = expL.sum(axis: 1, keepDims: true)
-        let weights = expL / sumExp
-
-        let rowsMx = repeated(MLXArray(Int32(0) ..< Int32(n)), count: k, axis: 0)
-        let colsMx = knnIndices.reshaped([-1]).asType(.int32)
-        let valsMx = weights.reshaped([-1])
-
-        let nL = Int64(n)
-        let fwdKeys = rowsMx.asType(.int64) * nL + colsMx.asType(.int64)
-        let revKeys = colsMx.asType(.int64) * nL + rowsMx.asType(.int64)
-        let sortIdx = argSort(fwdKeys)
-        let sortedKeys = fwdKeys[sortIdx]
-        let sortedVals = valsMx[sortIdx]
-        var pos = searchSorted(sortedKeys, revKeys)
-        pos = minimum(pos, sortedKeys.dim(0) - 1)
-        let matched = sortedKeys[pos] .== revKeys
-        let wRev = MLX.where(matched, sortedVals[pos], 0.0)
-        let wSym = (valsMx + wRev) / (2.0 * Float(n))
-
-        let allRows = concatenated([rowsMx, colsMx])
-        let allCols = concatenated([colsMx, rowsMx])
-        let allVals = concatenated([wSym, wSym])
-        let keys = allRows.asType(.int64) * nL + allCols.asType(.int64)
-        let sortIdx2 = argSort(keys)
-        let sortedKeys2 = keys[sortIdx2]
-        eval(sortedKeys2, sortIdx2)
-
-        let sk = sortedKeys2.asArray(Int64.self)
-        let si = sortIdx2.asArray(Int32.self)
-        var finalIdx: [Int32] = []
-        finalIdx.reserveCapacity(sk.count)
-        for i in 0..<sk.count where i == 0 || sk[i] != sk[i - 1] {
-            finalIdx.append(si[i])
-        }
-        let finalIdxMx = MLXArray(finalIdx)
-
-        return (allRows[finalIdxMx], allCols[finalIdxMx], allVals[finalIdxMx])
     }
 
     // MARK: - Optimization
