@@ -5,13 +5,10 @@
 // t-SNE local structure preservation with PCA global structure preservation via a
 // regularization term: L = (1-lam)*L_tsne + (lam/n)*||Y - alpha*Y_tilde||^2.
 //
-// The optimization core mirrors t-SNE (sparse attractive forces over KNN edges,
-// exact all-pairs repulsive forces, momentum GD with adaptive gains) and adds a
-// 2D PCA reference embedding Y_tilde plus the regularization gradient each step.
-//
-// NOTE: the Python reference adds an FFT-accelerated repulsive path for n >= 16000
-// purely as a speed optimization producing the same gradient as the exact path.
-// This port uses the exact (full / chunked) path for all n, matching the t-SNE port.
+// DREAMS reuses the shared t-SNE-family core (Core/TSNEOptimizer.swift) and supplies
+// its PCA-regularization as a `transformGradient` hook: a 2D PCA reference embedding
+// Y_tilde plus the gradient term (1-lam)*grad + (2*lam/n)*(Y - alpha*Y_tilde) each step.
+// Repulsion (FFT / full / chunked) is shared via ``TSNERepulsion``.
 
 import Foundation
 import MLX

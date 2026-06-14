@@ -67,15 +67,18 @@ These are the deliberate, documented deviations made during the port (see
 - **t-SNE / DREAMS use the FFT-accelerated (FIt-SNE) repulsive path for `n ≥ 16000`
   (2D)**, like the Python reference, with an exact full/chunked fallback otherwise.
   The FFT port matches Python's `_fft_repulsive` within 1e-3 on identical input
-  (same `libmlx` FFT). t-SNE on 16,000×20 runs ~1.8s for 30 iterations.
+  (same `libmlx` FFT). t-SNE on 16,000×20 runs ~0.3s for 30 iterations (Release).
 - **NNDescent** ports the full descent loop (random init → neighbor-of-neighbor joins +
   reverse candidates → dedup/top-k → convergence). The fp16 / random-projection FLOP
   reductions in the Python version are omitted (performance-only; the graph is
   unchanged). Measured recall vs exact KNN: ~0.86 on a 2000×16 random benchmark.
 - **Random sampling** is seeded from `randomState` but does not bit-match numpy's RNG, so
   stochastic methods will not be element-identical to Python — algorithmic behavior is
-  preserved.
-- `@mx.compile` is not applied (correctness-first); it is a future performance lever.
+  preserved. (These methods are also not bit-reproducible run-to-run: GPU scatter-add is
+  atomic/unordered. Tests assert stable *structure*, not exact positions.)
+- **Performance:** the t-SNE/DREAMS repulsive kernel is `compile()`-fused (~1.5× in
+  Release) and brute-force KNN is async-pipelined. The package is leak-checked
+  (`activeMemory` stays flat across repeated fits — see `BenchmarkTests`).
 
 ## Build & test
 

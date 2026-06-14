@@ -1,13 +1,10 @@
 // t-SNE implementation in pure MLX for Apple Silicon.
 // Port of mlx_vis/_tsne/tsne.py
 //
-// Uses a sparse P matrix (KNN), exact repulsive forces (full or chunked all-pairs
-// on the GPU), and momentum-based gradient descent with adaptive gains.
-//
-// NOTE: the Python reference adds an FFT-accelerated repulsive path for n >= 16000
-// purely as a speed optimization; it produces the same gradient as the exact path.
-// This port uses the exact chunked path for all n (correct, slower at very large n).
-// FFT acceleration is a future optimization (see PORTING_NOTES.md).
+// Uses a sparse P matrix (KNN) and momentum-based gradient descent with adaptive
+// gains. The repulsive force, P-matrix, and optimizer loop are shared with DREAMS
+// via Core/{AffinityGraph,Repulsion,TSNEOptimizer}.swift; ``TSNERepulsion`` picks
+// the FFT (n >= 16000, 2D), full, or chunked path automatically.
 
 import Foundation
 import MLX
