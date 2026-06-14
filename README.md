@@ -86,3 +86,24 @@ xcodebuild -scheme MLXVis -destination 'platform=macOS' -derivedDataPath .xcdd t
 
 The scheme name is `MLXVis` (the package name). `swift build` / `swift test` do **not**
 work — they cannot load MLX's Metal library; use `xcodebuild`.
+
+## License & attribution
+
+`MLXVis` is licensed under the **Apache License, Version 2.0** — see [`LICENSE`](LICENSE).
+
+It is a **Swift port of [mlx-vis](https://github.com/hanxiao/mlx-vis)** by
+**Han Xiao**, which is also Apache-2.0. This is a derivative work; the upstream
+attribution and a statement of the significant changes are in [`NOTICE`](NOTICE),
+and the technical divergences (and what this port adds) are detailed above and in
+[`PORTING_NOTES.md`](PORTING_NOTES.md). In short:
+
+- **Ported:** all nine dimensionality-reduction algorithms (UMAP, t-SNE, PaCMAP,
+  LocalMAP, TriMap, DREAMS, CNE, MMAE, NNDescent).
+- **Changed:** MLXArray API surface; covariance-SVD PCA; seeded-but-not-numpy RNG.
+- **Added:** `onEpoch`/`progressEvery` animation hooks, FFT + `compile()` repulsive
+  path, async KNN pipelining, a leak-checked benchmark harness, and shared
+  affinity-graph / repulsion / optimizer modules for the t-SNE family.
+- **Not ported:** the GPU rendering / plotting / video layer (algorithms only).
+
+The [mlx-swift](https://github.com/ml-explore/mlx-swift) dependency is © Apple Inc.,
+MIT-licensed.

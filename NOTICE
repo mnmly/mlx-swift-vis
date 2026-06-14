@@ -1,0 +1,25 @@
+MLXVis
+Copyright 2026 Hiroaki Yamane
+
+This product is a Swift port of mlx-vis (https://github.com/hanxiao/mlx-vis),
+Copyright Han Xiao <han.xiao@jina.ai>, licensed under the Apache License,
+Version 2.0. Portions of this work are derived from that project.
+
+This is a Derivative Work under the Apache License, Section 4(b). Significant
+changes from the original Python `mlx-vis` (see README.md and PORTING_NOTES.md
+for the full list):
+
+  - Reimplemented in Swift on mlx-swift; the public surface is MLXArray-in /
+    MLXArray-out (no numpy / scipy / sklearn).
+  - PCA uses a covariance SVD instead of `eigh` (absent in mlx-swift).
+  - Added progress hooks (`onEpoch` + `progressEvery`, including an initial frame)
+    in place of the Python `epoch_callback`.
+  - FFT-accelerated and `compile()`-fused t-SNE / DREAMS repulsive path.
+  - Approximate NN-Descent descent loop, brute-force KNN with async pipelining.
+  - The t-SNE family shares extracted affinity-graph / repulsion / optimizer
+    modules.
+  - The GPU rendering / plotting / video layer of the original is NOT ported;
+    this package provides the dimensionality-reduction algorithms only.
+
+The mlx-swift dependency (https://github.com/ml-explore/mlx-swift) is licensed
+separately by Apple Inc. under the MIT License.
