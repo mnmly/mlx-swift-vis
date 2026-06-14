@@ -91,68 +91,14 @@ public final class TSNE {
         var y = pcaReduce(xMx, dim: nComponents) * 1e-4
         eval(y)
 
-        y = optimize(edgeFrom: edgeFrom, edgeTo: edgeTo, edgeWeights: edgeWeights, y: y, n: n)
+        y = optimizeTSNEFamily(
+            edgeFrom: edgeFrom, edgeTo: edgeTo, edgeWeights: edgeWeights, y: y, n: n,
+            learningRate: learningRate, earlyExaggeration: earlyExaggeration,
+            earlyExaggerationIter: earlyExaggerationIter, nEpochs: nIter,
+            onEpoch: onEpoch, progressEvery: progressEvery, verbose: verbose)
         eval(y)
         self.embedding = y
         return y
     }
 
-    // MARK: - Optimization
-
-    private func optimize(edgeFrom: MLXArray, edgeTo: MLXArray, edgeWeights: MLXArray, y y0: MLXArray, n: Int) -> MLXArray {
-        var y = y0
-        let nEpochs = nIter
-        let lr = learningRate
-        var velocity = MLXArray.zeros(like: y)
-        var gains = MLXArray.ones(like: y)
-        let minGain: Float = 0.01
-
-        let weightsExag = edgeWeights * earlyExaggeration
-        eval(weightsExag)
-
-        // Repulsive force: one module picks FFT / full / chunked once and reuses it.
-        let repulsion = TSNERepulsion(n: n, dims: y.dim(1))
-        if verbose > 0 && repulsion.usesFFT { print("Using FFT-accelerated repulsive (n=\(n))") }
-
-        if onEpoch != nil { eval(y); onEpoch?(0, nEpochs, y) }  // initial frame
-        for epoch in 0..<nEpochs {
-            let momentum: Float = epoch < 250 ? 0.5 : 0.8
-            let w = epoch < earlyExaggerationIter ? weightsExag : edgeWeights
-
-            // Attractive (sparse).
-            let diffA = y[edgeFrom] - y[edgeTo]
-            let dsqA = (diffA * diffA).sum(axis: 1, keepDims: true)
-            let fAttr = 4.0 * w.expandedDimensions(axis: 1) * diffA / (1.0 + dsqA)
-            var grad = MLXArray.zeros(like: y)
-            grad = grad.at[edgeFrom].add(fAttr)
-
-            // Repulsive.
-            let (z, repGrad) = repulsion(y)
-            grad = grad - (4.0 / z) * repGrad
-
-            // Phase transition reset.
-            if epoch == earlyExaggerationIter {
-                gains = MLXArray.ones(like: y)
-                velocity = MLXArray.zeros(like: y)
-            }
-
-            // Adaptive gains.
-            let inc = (velocity * grad) .< 0.0
-            gains = MLX.where(inc, gains + 0.2, gains * 0.8)
-            gains = maximum(gains, minGain)
-
-            velocity = momentum * velocity - lr * (gains * grad)
-            y = y + velocity
-            y = y - y.mean(axis: 0)
-
-            eval(y, velocity, gains)
-            if onEpoch != nil && ((epoch + 1) % max(1, progressEvery) == 0 || epoch == nEpochs - 1) {
-                onEpoch?(epoch + 1, nEpochs, y)
-            }
-            if verbose > 0 && (epoch + 1) % verbose == 0 {
-                print("Epoch \(epoch + 1)/\(nEpochs)")
-            }
-        }
-        return y
-    }
 }

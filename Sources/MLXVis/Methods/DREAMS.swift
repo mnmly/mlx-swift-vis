@@ -107,83 +107,27 @@ public final class DREAMS {
         var y = std0 > 0 ? yTilde * (1e-4 / std0) : yTilde * 1e-4
         eval(y)
 
-        y = optimize(edgeFrom: edgeFrom, edgeTo: edgeTo, edgeWeights: edgeWeights,
-                     y: y, n: n, yTilde: yTilde)
+        // DREAMS = t-SNE-family optimizer + a PCA-regularization gradient hook.
+        let yTildeNorm = MLX.sqrt((yTilde * yTilde).sum())
+        eval(yTildeNorm)
+        let lam = self.lam
+        let nF = Float(n)
+        y = optimizeTSNEFamily(
+            edgeFrom: edgeFrom, edgeTo: edgeTo, edgeWeights: edgeWeights, y: y, n: n,
+            learningRate: learningRate, earlyExaggeration: earlyExaggeration,
+            earlyExaggerationIter: earlyExaggerationIter, nEpochs: nIter,
+            onEpoch: onEpoch, progressEvery: progressEvery, verbose: verbose,
+            transformGradient: { grad, y, _ in
+                // (1-λ)·grad + (2λ/n)(Y - α·Ỹ),  α = ‖Y‖_F / ‖Ỹ‖_F.
+                guard lam > 0 else { return grad }
+                let yNorm = MLX.sqrt((y * y).sum())
+                let alpha = yNorm / maximum(yTildeNorm, MLXArray(Float(1e-12)))
+                let gradReg = (2.0 * lam / nF) * (y - alpha * yTilde)
+                return (1.0 - lam) * grad + gradReg
+            })
         eval(y)
         self.embedding = y
         return y
     }
 
-    // MARK: - Optimization
-
-    private func optimize(edgeFrom: MLXArray, edgeTo: MLXArray, edgeWeights: MLXArray,
-                          y y0: MLXArray, n: Int, yTilde: MLXArray) -> MLXArray {
-        var y = y0
-        let nEpochs = nIter
-        let lr = learningRate
-        let lam = self.lam
-        var velocity = MLXArray.zeros(like: y)
-        var gains = MLXArray.ones(like: y)
-        let minGain: Float = 0.01
-
-        let weightsExag = edgeWeights * earlyExaggeration
-        eval(weightsExag)
-
-        // Frobenius norm of Y_tilde (constant across epochs).
-        let yTildeNorm = MLX.sqrt((yTilde * yTilde).sum())
-        eval(yTildeNorm)
-
-        // Repulsive force: one module picks FFT / full / chunked once and reuses it.
-        let repulsion = TSNERepulsion(n: n, dims: y.dim(1))
-        if verbose > 0 && repulsion.usesFFT { print("Using FFT-accelerated repulsive (n=\(n))") }
-
-        if onEpoch != nil { eval(y); onEpoch?(0, nEpochs, y) }  // initial frame
-        for epoch in 0..<nEpochs {
-            let momentum: Float = epoch < 250 ? 0.5 : 0.8
-            let w = epoch < earlyExaggerationIter ? weightsExag : edgeWeights
-
-            // Attractive (sparse).
-            let diffA = y[edgeFrom] - y[edgeTo]
-            let dsqA = (diffA * diffA).sum(axis: 1, keepDims: true)
-            let fAttr = 4.0 * w.expandedDimensions(axis: 1) * diffA / (1.0 + dsqA)
-            var grad = MLXArray.zeros(like: y)
-            grad = grad.at[edgeFrom].add(fAttr)
-
-            // Repulsive.
-            let (z, repGrad) = repulsion(y)
-            grad = grad - (4.0 / z) * repGrad
-
-            // DREAMS regularization: (2*lam/n) * (Y - alpha*Y_tilde), alpha = ||Y||_F / ||Y_tilde||_F.
-            if lam > 0 {
-                let yNorm = MLX.sqrt((y * y).sum())
-                let alpha = yNorm / maximum(yTildeNorm, MLXArray(Float(1e-12)))
-                let gradReg = (2.0 * lam / Float(n)) * (y - alpha * yTilde)
-                grad = (1.0 - lam) * grad + gradReg
-            }
-
-            // Phase transition reset.
-            if epoch == earlyExaggerationIter {
-                gains = MLXArray.ones(like: y)
-                velocity = MLXArray.zeros(like: y)
-            }
-
-            // Adaptive gains.
-            let inc = (velocity * grad) .< 0.0
-            gains = MLX.where(inc, gains + 0.2, gains * 0.8)
-            gains = maximum(gains, minGain)
-
-            velocity = momentum * velocity - lr * (gains * grad)
-            y = y + velocity
-            y = y - y.mean(axis: 0)
-
-            eval(y, velocity, gains)
-            if onEpoch != nil && ((epoch + 1) % max(1, progressEvery) == 0 || epoch == nEpochs - 1) {
-                onEpoch?(epoch + 1, nEpochs, y)
-            }
-            if verbose > 0 && (epoch + 1) % verbose == 0 {
-                print("Epoch \(epoch + 1)/\(nEpochs)")
-            }
-        }
-        return y
-    }
 }
