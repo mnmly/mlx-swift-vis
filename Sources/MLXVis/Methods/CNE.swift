@@ -36,6 +36,11 @@ public final class CNE {
 
     public private(set) var embedding: MLXArray?
 
+    /// Optional progress hook, called periodically during `fitTransform` with
+    /// `(iteration, totalIterations, embedding)` so callers can animate the
+    /// optimization. No-op when unset.
+    public var onEpoch: ((Int, Int, MLXArray) -> Void)?
+
     public init(
         nComponents: Int = 2,
         nNeighbors: Int = 15,
@@ -309,6 +314,7 @@ public final class CNE {
 
             if itr % 10 == 0 || itr == nIter {
                 eval(y, m, v)
+                onEpoch?(itr, nIter, y)
             }
             if verbose && itr % 50 == 0 {
                 print("Iteration \(itr)/\(nIter)")

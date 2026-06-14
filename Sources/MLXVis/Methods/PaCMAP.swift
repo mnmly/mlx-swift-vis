@@ -26,6 +26,11 @@ public class PaCMAP {
 
     public private(set) var embedding: MLXArray?
 
+    /// Optional progress hook, called periodically during `fitTransform` with
+    /// `(iteration, totalIterations, embedding)` so callers can animate the
+    /// optimization. Inherited by `LocalMAP`. No-op when unset.
+    public var onEpoch: ((Int, Int, MLXArray) -> Void)?
+
     // Set during preprocessing: true if PCA reduction to 100 dims was applied.
     fileprivate var pcaSolution = false
 
@@ -503,7 +508,10 @@ public class PaCMAP {
                 eval(srcFP, dstFP)
             }
 
-            if (itr + 1) % 10 == 0 { eval(y, m, v) }
+            if (itr + 1) % 10 == 0 {
+                eval(y, m, v)
+                onEpoch?(itr + 1, numItersTotal, y)
+            }
         }
 
         eval(y)

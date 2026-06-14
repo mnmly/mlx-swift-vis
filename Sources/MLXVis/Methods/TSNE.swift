@@ -29,6 +29,11 @@ public final class TSNE {
 
     public private(set) var embedding: MLXArray?
 
+    /// Optional progress hook, called periodically during `fitTransform` with
+    /// `(iteration, totalIterations, embedding)` so callers can animate the
+    /// optimization. The embedding is `(nSamples, nComponents)`. No-op when unset.
+    public var onEpoch: ((Int, Int, MLXArray) -> Void)?
+
     public init(
         nComponents: Int = 2,
         perplexity: Float = 30.0,
@@ -294,6 +299,9 @@ public final class TSNE {
             y = y - y.mean(axis: 0)
 
             eval(y, velocity, gains)
+            if (epoch + 1) % 10 == 0 || epoch == nEpochs - 1 {
+                onEpoch?(epoch + 1, nEpochs, y)
+            }
             if verbose > 0 && (epoch + 1) % verbose == 0 {
                 print("Epoch \(epoch + 1)/\(nEpochs)")
             }

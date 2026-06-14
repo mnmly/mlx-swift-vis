@@ -30,6 +30,11 @@ public final class TriMap {
 
     public private(set) var embedding: MLXArray?
 
+    /// Optional progress hook, called periodically during `fitTransform` with
+    /// `(iteration, totalIterations, embedding)` so callers can animate the
+    /// optimization. The embedding is `(nSamples, nComponents)`. No-op when unset.
+    public var onEpoch: ((Int, Int, MLXArray) -> Void)?
+
     public init(
         nComponents: Int = 2,
         nNeighbors: Int = 12,
@@ -127,7 +132,10 @@ public final class TriMap {
             vel = momentum * vel - lr * gain * grad
             y = y + vel
 
-            if itr % 10 == 0 { eval(y, vel, gain) }
+            if itr % 10 == 0 {
+                eval(y, vel, gain)
+                onEpoch?(itr, max(1, nIters), y)
+            }
         }
 
         eval(y)

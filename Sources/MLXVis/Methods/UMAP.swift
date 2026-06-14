@@ -22,6 +22,12 @@ public final class UMAP {
 
     public private(set) var embedding: MLXArray?
 
+    /// Optional progress hook, called periodically during `fitTransform` with
+    /// `(epoch, totalEpochs, embedding)` so callers can animate the optimization
+    /// as it converges. The embedding is `(nSamples, nComponents)` and already
+    /// evaluated. No overhead when unset.
+    public var onEpoch: ((Int, Int, MLXArray) -> Void)?
+
     public init(
         nComponents: Int = 2,
         nNeighbors: Int = 15,
@@ -333,6 +339,7 @@ public final class UMAP {
 
             if (epoch + 1) % 10 == 0 || epoch == nEpochs - 1 {
                 eval(y)
+                onEpoch?(epoch + 1, nEpochs, y)
             }
             if verbose && (epoch + 1) % 50 == 0 {
                 print("Epoch \(epoch + 1)/\(nEpochs)")

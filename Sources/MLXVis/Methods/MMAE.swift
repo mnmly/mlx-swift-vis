@@ -97,6 +97,11 @@ public final class MMAE {
 
     public private(set) var embedding: MLXArray?
 
+    /// Optional progress hook, called once per epoch during `fitTransform` with
+    /// `(epoch, totalEpochs, embedding)` so callers can animate training. When
+    /// set it encodes the full set each epoch (extra cost); no-op when unset.
+    public var onEpoch: ((Int, Int, MLXArray) -> Void)?
+
     public init(
         nComponents: Int = 2,
         nEpochs: Int = 39,
@@ -205,7 +210,7 @@ public final class MMAE {
         let nBatches = max(0, trainN / batchSize)
 
         model.train()
-        for _ in 0..<nEpochs {
+        for epoch in 0..<nEpochs {
             // Sample trainN distinct indices (replace=False) on CPU, matching Python.
             let perm = MMAE.choice(n: n, count: trainN)
             let xShuf = take(xTrain, perm, axis: 0)
@@ -220,6 +225,16 @@ public final class MMAE {
                 let (_, grads) = lossAndGrad(model, [xb, eb, rb])
                 optimizer.update(model: model, gradients: grads)
                 eval(model.parameters())
+            }
+
+            // Progress: encode the full set this epoch (inference mode) so callers
+            // can animate training. Gated on `onEpoch` so there's no cost otherwise.
+            if let cb = onEpoch {
+                model.train(false)
+                let yy = model.encode(xTrain)
+                eval(yy)
+                cb(epoch + 1, nEpochs, yy)
+                model.train()
             }
         }
 

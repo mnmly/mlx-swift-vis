@@ -154,6 +154,35 @@ final class CoreTests: XCTestCase {
         XCTAssertLessThan(zRel, 0.05, "FFT Z partition diverges from exact")
         XCTAssertLessThan(gRel, 0.15, "FFT repulsive gradient diverges from exact")
     }
+
+    /// The `onEpoch` progress hook fires during optimization with sane arguments.
+    func testOnEpochCallback() {
+        let x = MLXRandom.normal([300, 20])
+
+        // Iteration-cadence method.
+        var umapCalls: [(Int, Int)] = []
+        let umap = UMAP(nComponents: 2, nNeighbors: 15, nEpochs: 50, randomState: 0)
+        umap.onEpoch = { it, total, y in
+            umapCalls.append((it, total))
+            XCTAssertEqual(y.shape, [300, 2])
+        }
+        _ = umap.fitTransform(x)
+        XCTAssertFalse(umapCalls.isEmpty, "UMAP onEpoch never fired")
+        XCTAssertTrue(umapCalls.allSatisfy { $0.1 == 50 }, "wrong total: \(umapCalls)")
+        XCTAssertTrue(umapCalls.map(\.0) == umapCalls.map(\.0).sorted(), "iterations not monotonic")
+        XCTAssertLessThanOrEqual(umapCalls.last!.0, 50)
+
+        // Epoch-cadence method with the extra encode path (MMAE).
+        var mmaeCount = 0
+        let mmae = MMAE(nComponents: 2, nEpochs: 5, batchSize: 64, pcaDim: 15, randomState: 0)
+        mmae.onEpoch = { _, total, y in
+            mmaeCount += 1
+            XCTAssertEqual(total, 5)
+            XCTAssertEqual(y.shape[1], 2)
+        }
+        _ = mmae.fitTransform(x)
+        XCTAssertEqual(mmaeCount, 5, "MMAE onEpoch should fire once per epoch")
+    }
 }
 
 extension MLXArray {
