@@ -168,6 +168,7 @@ final class CoreTests: XCTestCase {
         }
         _ = umap.fitTransform(x)
         XCTAssertFalse(umapCalls.isEmpty, "UMAP onEpoch never fired")
+        XCTAssertEqual(umapCalls.first!.0, 0, "first frame should be the initial (iteration 0)")
         XCTAssertTrue(umapCalls.allSatisfy { $0.1 == 50 }, "wrong total: \(umapCalls)")
         XCTAssertTrue(umapCalls.map(\.0) == umapCalls.map(\.0).sorted(), "iterations not monotonic")
         XCTAssertLessThanOrEqual(umapCalls.last!.0, 50)
@@ -182,7 +183,7 @@ final class CoreTests: XCTestCase {
             XCTAssertEqual(y.shape[1], 2)
         }
         _ = mmae.fitTransform(x)
-        XCTAssertEqual(mmaeCount, 5, "MMAE onEpoch should fire once per epoch")
+        XCTAssertEqual(mmaeCount, 6, "MMAE: 1 initial frame + 5 per-epoch frames")
     }
 
     /// `progressEvery` controls how often `onEpoch` fires.

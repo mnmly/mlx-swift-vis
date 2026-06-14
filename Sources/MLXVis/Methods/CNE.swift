@@ -38,7 +38,7 @@ public final class CNE {
 
     /// Optional progress hook, called periodically during `fitTransform` with
     /// `(iteration, totalIterations, embedding)` so callers can animate the
-    /// optimization. No-op when unset.
+    /// optimization. Fires once at iteration 0 with the initial embedding, then on the `progressEvery` schedule. No-op when unset.
     public var onEpoch: ((Int, Int, MLXArray) -> Void)?
 
     /// How often `onEpoch` fires, in optimizer steps (default 10). Set to 1 for a
@@ -284,6 +284,7 @@ public final class CNE {
 
         if verbose { print("Starting optimization...") }
 
+        if onEpoch != nil { eval(y); onEpoch?(0, nIter, y) }  // initial frame
         for itr in 1...max(1, nIter) {
             let batchEdges: MLXArray
             if !fullBatch {

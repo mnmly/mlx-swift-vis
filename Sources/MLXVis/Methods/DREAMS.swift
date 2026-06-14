@@ -36,7 +36,7 @@ public final class DREAMS {
 
     /// Optional progress hook, called periodically during `fitTransform` with
     /// `(iteration, totalIterations, embedding)` so callers can animate the
-    /// optimization. No-op when unset.
+    /// optimization. Fires once at iteration 0 with the initial embedding, then on the `progressEvery` schedule. No-op when unset.
     public var onEpoch: ((Int, Int, MLXArray) -> Void)?
 
     /// How often `onEpoch` fires, in optimizer steps (default 10). Set to 1 for a
@@ -275,6 +275,7 @@ public final class DREAMS {
             }
         }
 
+        if onEpoch != nil { eval(y); onEpoch?(0, nEpochs, y) }  // initial frame
         for epoch in 0..<nEpochs {
             let momentum: Float = epoch < 250 ? 0.5 : 0.8
             let w = epoch < earlyExaggerationIter ? weightsExag : edgeWeights

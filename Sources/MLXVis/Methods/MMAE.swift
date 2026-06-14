@@ -215,6 +215,12 @@ public final class MMAE {
         let nBatches = max(0, trainN / batchSize)
 
         model.train()
+        if let cb = onEpoch {  // initial frame
+            model.train(false)
+            let y0 = model.encode(xTrain); eval(y0)
+            cb(0, nEpochs, y0)
+            model.train()
+        }
         for epoch in 0..<nEpochs {
             // Sample trainN distinct indices (replace=False) on CPU, matching Python.
             let perm = MMAE.choice(n: n, count: trainN)

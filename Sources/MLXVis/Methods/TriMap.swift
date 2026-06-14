@@ -32,7 +32,7 @@ public final class TriMap {
 
     /// Optional progress hook, called periodically during `fitTransform` with
     /// `(iteration, totalIterations, embedding)` so callers can animate the
-    /// optimization. The embedding is `(nSamples, nComponents)`. No-op when unset.
+    /// optimization. Fires once at iteration 0 with the initial embedding, then on the `progressEvery` schedule. The embedding is `(nSamples, nComponents)`. No-op when unset.
     public var onEpoch: ((Int, Int, MLXArray) -> Void)?
 
     /// How often `onEpoch` fires, in optimizer steps (default 10). Set to 1 for a
@@ -125,6 +125,7 @@ public final class TriMap {
         eval(vel, gain)
 
         log("Starting optimization...")
+        if onEpoch != nil { eval(y); onEpoch?(0, max(1, nIters), y) }  // initial frame
         for itr in 1...max(1, nIters) {
             let grad = computeGradient(y: y, triplets: triplets, weights: weights)
 

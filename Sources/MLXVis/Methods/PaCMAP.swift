@@ -28,7 +28,7 @@ public class PaCMAP {
 
     /// Optional progress hook, called periodically during `fitTransform` with
     /// `(iteration, totalIterations, embedding)` so callers can animate the
-    /// optimization. Inherited by `LocalMAP`. No-op when unset.
+    /// optimization. Fires once at iteration 0 with the initial embedding, then on the `progressEvery` schedule. Inherited by `LocalMAP`. No-op when unset.
     public var onEpoch: ((Int, Int, MLXArray) -> Void)?
 
     /// How often `onEpoch` fires, in optimizer steps (default 10). Set to 1 for a
@@ -474,6 +474,7 @@ public class PaCMAP {
         let neighborDstMx: MLXArray? = nNeighborsLocal > 0 ? dstNN : nil
 
         log("Starting optimisation...")
+        if onEpoch != nil { eval(y); onEpoch?(0, numItersTotal, y) }  // initial frame
         for itr in 0..<numItersTotal {
             let lrT = Float(
                 Double(lr) * sqrt(1.0 - pow(beta2, Double(itr + 1)))

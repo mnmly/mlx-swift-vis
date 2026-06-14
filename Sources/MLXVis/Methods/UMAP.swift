@@ -324,6 +324,7 @@ public final class UMAP {
         // epoch), which `compile(shapeless:)` cannot shape-infer, and non-shapeless
         // would recompile every epoch. It is also cheap relative to the O(n^2)
         // attractive/repulsive work, so compilation buys little here.
+        if onEpoch != nil { eval(y); onEpoch?(0, nEpochs, y) }  // initial frame
         for epoch in 0..<nEpochs {
             guard let active = activeSets[epoch] else { continue }
             let activeMx = MLXArray(active)
