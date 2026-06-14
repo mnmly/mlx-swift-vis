@@ -53,6 +53,12 @@ DREAMS use an FFT-accelerated repulsive force for large 2-D embeddings.
 - ``normalizeInput(_:method:)``
 - ``Normalization``
 
-### Advanced
+### t-SNE family building blocks
 
+The shared, reusable pieces behind t-SNE and DREAMS — exposed for composition and
+direct testing.
+
+- ``buildPMatrix(_:_:perplexity:n:)``
+- ``reverseEdgeValues(rows:cols:vals:n:)``
+- ``TSNERepulsion``
 - ``fftRepulsiveGrad(_:n:)``
