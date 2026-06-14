@@ -10,6 +10,10 @@ algorithm is reimplemented in Swift MLX.
 > This is the **algorithms-only** port (the numerical core that produces embeddings).
 > The Python project's GPU video renderer / plotting layer is not included.
 
+<img width="600" height="335" alt="2D reduction of DINOv3 [CLS] features over Rauschenberg Foundation archival materials, computed with MLXVis" src="https://github.com/user-attachments/assets/8ed54022-31fe-45e1-a41b-3ee060ab07b6" />
+
+*2D reduction of DINOv3 `[CLS]` features over archived materials from the [Robert Rauschenberg Foundation](https://rauschenbergfoundation.org). Non-commercial research visualization; not affiliated with or endorsed by the Foundation. Artworks © Robert Rauschenberg Foundation, used under the Foundation's [Fair Use Policy](https://rauschenbergfoundation.org/foundation/fair-use-policy).*
+
 ## Requirements
 
 - macOS 14+ / iOS 17+ / visionOS 1+
