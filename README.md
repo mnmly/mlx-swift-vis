@@ -18,7 +18,7 @@ algorithm is reimplemented in Swift MLX.
 ## Install (SwiftPM)
 
 ```swift
-.package(url: "https://github.com/<you>/mlx-swift-vis.git", branch: "main")
+.package(url: "https://github.com/mnmly/mlx-swift-vis.git", from: "0.1.0")
 // target dependency: .product(name: "MLXVis", package: "mlx-swift-vis")
 ```
 
