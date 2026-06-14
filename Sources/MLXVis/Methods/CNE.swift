@@ -41,6 +41,11 @@ public final class CNE {
     /// optimization. No-op when unset.
     public var onEpoch: ((Int, Int, MLXArray) -> Void)?
 
+    /// How often `onEpoch` fires, in optimizer steps (default 10). Set to 1 for a
+    /// frame every step (smoothest animation, more overhead); ignored when `onEpoch`
+    /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
+    public var progressEvery: Int = 10
+
     public init(
         nComponents: Int = 2,
         nNeighbors: Int = 15,
@@ -312,10 +317,11 @@ public final class CNE {
             let vHat = v / (1.0 - pow(beta2, Float(itr)))
             y = y - lr * mHat / (MLX.sqrt(vHat) + eps)
 
-            if itr % 10 == 0 || itr == nIter {
+            let progressHit = onEpoch != nil && (itr % max(1, progressEvery) == 0 || itr == nIter)
+            if itr % 10 == 0 || itr == nIter || progressHit {
                 eval(y, m, v)
-                onEpoch?(itr, nIter, y)
             }
+            if progressHit { onEpoch?(itr, nIter, y) }
             if verbose && itr % 50 == 0 {
                 print("Iteration \(itr)/\(nIter)")
             }

@@ -102,6 +102,11 @@ public final class MMAE {
     /// set it encodes the full set each epoch (extra cost); no-op when unset.
     public var onEpoch: ((Int, Int, MLXArray) -> Void)?
 
+    /// How often `onEpoch` fires, in optimizer steps (default 10). Set to 1 for a
+    /// frame every step (smoothest animation, more overhead); ignored when `onEpoch`
+    /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
+    public var progressEvery: Int = 10
+
     public init(
         nComponents: Int = 2,
         nEpochs: Int = 39,
@@ -229,7 +234,7 @@ public final class MMAE {
 
             // Progress: encode the full set this epoch (inference mode) so callers
             // can animate training. Gated on `onEpoch` so there's no cost otherwise.
-            if let cb = onEpoch {
+            if let cb = onEpoch, ((epoch + 1) % max(1, progressEvery) == 0 || epoch == nEpochs - 1) {
                 model.train(false)
                 let yy = model.encode(xTrain)
                 eval(yy)

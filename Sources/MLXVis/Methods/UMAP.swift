@@ -28,6 +28,11 @@ public final class UMAP {
     /// evaluated. No overhead when unset.
     public var onEpoch: ((Int, Int, MLXArray) -> Void)?
 
+    /// How often `onEpoch` fires, in optimizer steps (default 10). Set to 1 for a
+    /// frame every step (smoothest animation, more overhead); ignored when `onEpoch`
+    /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
+    public var progressEvery: Int = 10
+
     public init(
         nComponents: Int = 2,
         nNeighbors: Int = 15,
@@ -337,10 +342,11 @@ public final class UMAP {
             y = Self.sgdStepGraph(y, ef: ef, et: et, negFrom: negFrom, negTo: negTo,
                                   alphaEpoch: MLXArray(alphaEpoch), a: a, b: b)[0]
 
-            if (epoch + 1) % 10 == 0 || epoch == nEpochs - 1 {
+            let progressHit = onEpoch != nil && ((epoch + 1) % max(1, progressEvery) == 0 || epoch == nEpochs - 1)
+            if (epoch + 1) % 10 == 0 || epoch == nEpochs - 1 || progressHit {
                 eval(y)
-                onEpoch?(epoch + 1, nEpochs, y)
             }
+            if progressHit { onEpoch?(epoch + 1, nEpochs, y) }
             if verbose && (epoch + 1) % 50 == 0 {
                 print("Epoch \(epoch + 1)/\(nEpochs)")
             }

@@ -175,6 +175,7 @@ final class CoreTests: XCTestCase {
         // Epoch-cadence method with the extra encode path (MMAE).
         var mmaeCount = 0
         let mmae = MMAE(nComponents: 2, nEpochs: 5, batchSize: 64, pcaDim: 15, randomState: 0)
+        mmae.progressEvery = 1   // fire every epoch
         mmae.onEpoch = { _, total, y in
             mmaeCount += 1
             XCTAssertEqual(total, 5)
@@ -182,6 +183,25 @@ final class CoreTests: XCTestCase {
         }
         _ = mmae.fitTransform(x)
         XCTAssertEqual(mmaeCount, 5, "MMAE onEpoch should fire once per epoch")
+    }
+
+    /// `progressEvery` controls how often `onEpoch` fires.
+    func testProgressEveryCadence() {
+        let x = MLXRandom.normal([300, 20])
+
+        func countCalls(_ every: Int) -> Int {
+            var calls = 0
+            let umap = UMAP(nComponents: 2, nNeighbors: 15, nEpochs: 50, randomState: 0)
+            umap.progressEvery = every
+            umap.onEpoch = { _, _, _ in calls += 1 }
+            _ = umap.fitTransform(x)
+            return calls
+        }
+        let everyOne = countCalls(1)    // ~50 frames (one per epoch)
+        let everyTen = countCalls(10)   // ~5-6 frames
+        XCTAssertGreaterThan(everyOne, everyTen,
+            "progressEvery=1 should fire more often than 10 (\(everyOne) vs \(everyTen))")
+        XCTAssertGreaterThanOrEqual(everyOne, 45, "progressEvery=1 should fire ~every epoch")
     }
 }
 

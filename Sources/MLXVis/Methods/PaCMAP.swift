@@ -31,6 +31,11 @@ public class PaCMAP {
     /// optimization. Inherited by `LocalMAP`. No-op when unset.
     public var onEpoch: ((Int, Int, MLXArray) -> Void)?
 
+    /// How often `onEpoch` fires, in optimizer steps (default 10). Set to 1 for a
+    /// frame every step (smoothest animation, more overhead); ignored when `onEpoch`
+    /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
+    public var progressEvery: Int = 10
+
     // Set during preprocessing: true if PCA reduction to 100 dims was applied.
     fileprivate var pcaSolution = false
 
@@ -508,10 +513,11 @@ public class PaCMAP {
                 eval(srcFP, dstFP)
             }
 
-            if (itr + 1) % 10 == 0 {
+            let progressHit = onEpoch != nil && ((itr + 1) % max(1, progressEvery) == 0 || itr == numItersTotal - 1)
+            if (itr + 1) % 10 == 0 || progressHit {
                 eval(y, m, v)
-                onEpoch?(itr + 1, numItersTotal, y)
             }
+            if progressHit { onEpoch?(itr + 1, numItersTotal, y) }
         }
 
         eval(y)

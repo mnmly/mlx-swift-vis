@@ -34,6 +34,11 @@ public final class TSNE {
     /// optimization. The embedding is `(nSamples, nComponents)`. No-op when unset.
     public var onEpoch: ((Int, Int, MLXArray) -> Void)?
 
+    /// How often `onEpoch` fires, in optimizer steps (default 10). Set to 1 for a
+    /// frame every step (smoothest animation, more overhead); ignored when `onEpoch`
+    /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
+    public var progressEvery: Int = 10
+
     public init(
         nComponents: Int = 2,
         perplexity: Float = 30.0,
@@ -299,7 +304,7 @@ public final class TSNE {
             y = y - y.mean(axis: 0)
 
             eval(y, velocity, gains)
-            if (epoch + 1) % 10 == 0 || epoch == nEpochs - 1 {
+            if onEpoch != nil && ((epoch + 1) % max(1, progressEvery) == 0 || epoch == nEpochs - 1) {
                 onEpoch?(epoch + 1, nEpochs, y)
             }
             if verbose > 0 && (epoch + 1) % verbose == 0 {

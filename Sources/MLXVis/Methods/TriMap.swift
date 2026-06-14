@@ -35,6 +35,11 @@ public final class TriMap {
     /// optimization. The embedding is `(nSamples, nComponents)`. No-op when unset.
     public var onEpoch: ((Int, Int, MLXArray) -> Void)?
 
+    /// How often `onEpoch` fires, in optimizer steps (default 10). Set to 1 for a
+    /// frame every step (smoothest animation, more overhead); ignored when `onEpoch`
+    /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
+    public var progressEvery: Int = 10
+
     public init(
         nComponents: Int = 2,
         nNeighbors: Int = 12,
@@ -132,10 +137,12 @@ public final class TriMap {
             vel = momentum * vel - lr * gain * grad
             y = y + vel
 
-            if itr % 10 == 0 {
+            let trimapTotal = max(1, nIters)
+            let progressHit = onEpoch != nil && (itr % max(1, progressEvery) == 0 || itr == trimapTotal)
+            if itr % 10 == 0 || progressHit {
                 eval(y, vel, gain)
-                onEpoch?(itr, max(1, nIters), y)
             }
+            if progressHit { onEpoch?(itr, trimapTotal, y) }
         }
 
         eval(y)
