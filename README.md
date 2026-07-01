@@ -107,9 +107,11 @@ and the technical divergences (and what this port adds) are detailed above and i
 - **Ported:** all nine dimensionality-reduction algorithms (UMAP, t-SNE, PaCMAP,
   LocalMAP, TriMap, DREAMS, CNE, MMAE, NNDescent).
 - **Changed:** MLXArray API surface; covariance-SVD PCA; seeded-but-not-numpy RNG.
-- **Added:** `onEpoch`/`progressEvery` animation hooks, FFT + `compile()` repulsive
-  path, async KNN pipelining, a leak-checked benchmark harness, and shared
-  affinity-graph / repulsion / optimizer modules for the t-SNE family.
+- **Added:** `onEpoch`/`progressEvery` animation hooks, an `onPhase` setup-progress
+  hook (KNN build, pair/graph sampling — the otherwise-silent work that dominates
+  the wall clock on large inputs), FFT + `compile()` repulsive path, async KNN
+  pipelining, a leak-checked benchmark harness, and shared affinity-graph /
+  repulsion / optimizer modules for the t-SNE family.
 - **Not ported:** the GPU rendering / plotting / video layer (algorithms only).
 
 The [mlx-swift](https://github.com/ml-explore/mlx-swift) dependency is © Apple Inc.,

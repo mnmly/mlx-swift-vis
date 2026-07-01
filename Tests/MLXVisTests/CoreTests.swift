@@ -204,6 +204,57 @@ final class CoreTests: XCTestCase {
             "progressEvery=1 should fire more often than 10 (\(everyOne) vs \(everyTen))")
         XCTAssertGreaterThanOrEqual(everyOne, 45, "progressEvery=1 should fire ~every epoch")
     }
+
+    /// The `onPhase` hook surfaces the otherwise-silent setup phases (KNN build,
+    /// pair/graph sampling, optimization start) — and fires with `verbose` off.
+    /// Covers the three plumbing shapes: PaCMAP's own `log`, UMAP/CNE's inlined
+    /// prints, and TSNE's `Int`-verbose helper.
+    func testOnPhaseCallback() {
+        let x = MLXRandom.normal([200, 20])
+
+        func phases(_ configure: (@escaping (String) -> Void) -> Void) -> [String] {
+            var seen: [String] = []
+            configure { seen.append($0) }
+            return seen
+        }
+
+        let pacmap = phases { cb in
+            let r = PaCMAP(nComponents: 2, nNeighbors: 10, numIters: (5, 5, 5), randomState: 0)
+            r.onPhase = cb                        // verbose stays false
+            _ = r.fitTransform(x)
+        }
+        XCTAssertFalse(pacmap.isEmpty, "PaCMAP onPhase never fired")
+        XCTAssertTrue(pacmap.contains { $0.localizedCaseInsensitiveContains("KNN") },
+            "PaCMAP should announce the KNN phase: \(pacmap)")
+        XCTAssertTrue(pacmap.contains { $0.localizedCaseInsensitiveContains("optimis") || $0.localizedCaseInsensitiveContains("optimiz") },
+            "PaCMAP should announce optimization start: \(pacmap)")
+
+        let umap = phases { cb in
+            let r = UMAP(nComponents: 2, nNeighbors: 15, nEpochs: 10, randomState: 0)
+            r.onPhase = cb
+            _ = r.fitTransform(x)
+        }
+        XCTAssertTrue(umap.contains { $0.localizedCaseInsensitiveContains("neighbor") },
+            "UMAP should announce the KNN phase: \(umap)")
+
+        let cne = phases { cb in
+            let r = CNE(nComponents: 2, nNeighbors: 15, nIter: 10, randomState: 0)
+            r.onPhase = cb
+            _ = r.fitTransform(x)
+        }
+        XCTAssertTrue(cne.contains { $0.localizedCaseInsensitiveContains("k-NN") },
+            "CNE should announce the KNN phase: \(cne)")
+
+        let tsne = phases { cb in
+            let r = TSNE(nComponents: 2, perplexity: 15, nIter: 10, randomState: 0)
+            r.onPhase = cb                        // verbose is Int, stays 0
+            _ = r.fitTransform(x)
+        }
+        XCTAssertTrue(tsne.contains { $0.localizedCaseInsensitiveContains("k-NN") },
+            "TSNE should announce the KNN phase: \(tsne)")
+        XCTAssertTrue(tsne.contains { $0.localizedCaseInsensitiveContains("affinity") },
+            "TSNE should announce the affinity-graph phase: \(tsne)")
+    }
 }
 
 extension MLXArray {

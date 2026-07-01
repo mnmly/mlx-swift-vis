@@ -33,6 +33,12 @@ public final class UMAP {
     /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
     public var progressEvery: Int = 10
 
+    /// Optional phase hook, called at each setup milestone during `fitTransform`
+    /// (PCA preprocess, KNN build, fuzzy simplicial set, spectral init) with a short
+    /// human-readable label. Lets callers surface the otherwise-silent
+    /// pre-optimization work to a UI. Fires regardless of `verbose`; no-op when unset.
+    public var onPhase: ((String) -> Void)?
+
     public init(
         nComponents: Int = 2,
         nNeighbors: Int = 15,
@@ -61,6 +67,13 @@ public final class UMAP {
         self.normalize = normalize
     }
 
+    private func log(_ msg: @autoclosure () -> String) {
+        guard verbose || onPhase != nil else { return }
+        let s = msg()
+        if verbose { print(s) }
+        onPhase?(s)
+    }
+
     /// Fit UMAP and return the embedding `(nSamples, nComponents)`.
     public func fitTransform(_ x0: MLXArray) -> MLXArray {
         var x = normalizeInput(x0.asType(.float32), method: normalize)
@@ -70,14 +83,14 @@ public final class UMAP {
         // Optional PCA preprocessing for high-dimensional data.
         let xForKNN: MLXArray
         if let pcaDim, dim > pcaDim {
-            if verbose { print("Applying PCA: \(dim) -> \(pcaDim) dims...") }
+            log("Applying PCA: \(dim) -> \(pcaDim) dims...")
             xForKNN = pcaReduce(x, dim: pcaDim)
         } else {
             xForKNN = x
         }
         x = xForKNN
 
-        if verbose { print("Computing nearest neighbors...") }
+        log("Computing nearest neighbors...")
         let (knnIndices, knnDists) = computeKNN(
             x, k: nNeighbors, method: knnMethod,
             returnEuclidean: true, randomState: randomState, verbose: verbose)
@@ -85,12 +98,12 @@ public final class UMAP {
         let epochs = nEpochs ?? (n <= 10000 ? 500 : 200)
         self.nEpochs = epochs
 
-        if verbose { print("Building fuzzy simplicial set...") }
+        log("Building fuzzy simplicial set...")
         let (rows, cols, vals) = fuzzySimplicialSet(knnIndices, knnDists, n: n, nEpochs: epochs)
 
         let (a, b) = Self.findABParams(spread: spread, minDist: minDist)
 
-        if verbose { print("Initializing embedding...") }
+        log("Initializing embedding...")
         if let randomState { MLXRandom.seed(UInt64(randomState)) }
         var y = spectralInit(rows: rows, cols: cols, vals: vals, n: n)
         eval(y)
@@ -203,7 +216,7 @@ public final class UMAP {
                 let pred = 1.0 / denom
                 let residual = pred - yv[i]
                 let da = -x2b / (denom * denom)
-                let db = -a * 2.0 * log(max(xv[i], 1e-20)) * x2b / (denom * denom)
+                let db = -a * 2.0 * Foundation.log(max(xv[i], 1e-20)) * x2b / (denom * denom)
                 jtj00 += da * da
                 jtj01 += da * db
                 jtj11 += db * db

@@ -36,6 +36,13 @@ public class PaCMAP {
     /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
     public var progressEvery: Int = 10
 
+    /// Optional phase hook, called at each setup milestone during `fitTransform`
+    /// (PCA preprocess, KNN build, pair sampling, optimization start) with a short
+    /// human-readable label. Lets callers surface the otherwise-silent
+    /// pre-optimization work — which dominates the wall clock for large inputs — to
+    /// a UI. Fires regardless of `verbose`; no-op when unset. Inherited by `LocalMAP`.
+    public var onPhase: ((String) -> Void)?
+
     // Set during preprocessing: true if PCA reduction to 100 dims was applied.
     fileprivate var pcaSolution = false
 
@@ -66,7 +73,10 @@ public class PaCMAP {
     }
 
     private func log(_ msg: @autoclosure () -> String) {
-        if verbose { print(msg()) }
+        guard verbose || onPhase != nil else { return }
+        let s = msg()
+        if verbose { print(s) }
+        onPhase?(s)
     }
 
     /// Fit PaCMAP and return the embedding `(nSamples, nComponents)`.

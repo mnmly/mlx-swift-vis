@@ -107,6 +107,12 @@ public final class MMAE {
     /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
     public var progressEvery: Int = 10
 
+    /// Optional phase hook, called at each setup milestone during `fitTransform`
+    /// (reference construction, training start) with a short human-readable label.
+    /// Lets callers surface the otherwise-silent pre-training work to a UI. Fires
+    /// regardless of `verbose`; no-op when unset.
+    public var onPhase: ((String) -> Void)?
+
     public init(
         nComponents: Int = 2,
         nEpochs: Int = 39,
@@ -137,19 +143,26 @@ public final class MMAE {
         self.normalize = normalize
     }
 
+    private func log(_ msg: @autoclosure () -> String) {
+        guard verbose || onPhase != nil else { return }
+        let s = msg()
+        if verbose { print(s) }
+        onPhase?(s)
+    }
+
     /// Build the reference embedding for MM-reg.
     private func buildReference(_ x: MLXArray, n: Int, d: Int, reference: MLXArray?) -> MLXArray {
         if let reference {
             let ref = reference.asType(.float32)
             precondition(ref.dim(0) == n, "reference has \(ref.dim(0)) samples, expected \(n)")
-            if verbose { print("MMAE: using external reference (\(ref.dim(1))D)") }
+            log("MMAE: using external reference (\(ref.dim(1))D)")
             return ref
         }
         if let pcaDim, d > pcaDim {
-            if verbose { print("MMAE: PCA reference \(d)D -> \(pcaDim)D") }
+            log("MMAE: PCA reference \(d)D -> \(pcaDim)D")
             return pcaReduce(x, dim: pcaDim)
         }
-        if verbose { print("MMAE: using raw input (\(d)D) as reference space") }
+        log("MMAE: using raw input (\(d)D) as reference space")
         return x
     }
 
@@ -205,9 +218,7 @@ public final class MMAE {
         }
         let lossAndGrad = valueAndGrad(model: model, lossFn)
 
-        if verbose {
-            print("MMAE: architecture \(d) -> \(hiddenDims) -> \(nComponents); n=\(n), bs=\(batchSize), epochs=\(nEpochs)")
-        }
+        log("MMAE: architecture \(d) -> \(hiddenDims) -> \(nComponents); n=\(n), bs=\(batchSize), epochs=\(nEpochs)")
 
         // Train on subsample per epoch; encoder generalizes to full dataset.
         var trainN = min(n, 40000)

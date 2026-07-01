@@ -41,6 +41,12 @@ public final class DREAMS {
     /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
     public var progressEvery: Int = 10
 
+    /// Optional phase hook, called at each setup milestone during `fitTransform`
+    /// (KNN build, affinity-graph construction, optimization start) with a short
+    /// human-readable label. Lets callers surface the otherwise-silent
+    /// pre-optimization work to a UI. Fires regardless of `verbose`; no-op when unset.
+    public var onPhase: ((String) -> Void)?
+
     public init(
         nComponents: Int = 2,
         perplexity: Float = 30.0,
@@ -69,6 +75,13 @@ public final class DREAMS {
         self.normalize = normalize
     }
 
+    private func log(_ msg: @autoclosure () -> String) {
+        guard verbose > 0 || onPhase != nil else { return }
+        let s = msg()
+        if verbose > 0 { print(s) }
+        onPhase?(s)
+    }
+
     /// Fit DREAMS and return the embedding `(nSamples, nComponents)`.
     public func fitTransform(_ x0: MLXArray) -> MLXArray {
         let xMx = normalizeInput(x0.asType(.float32), method: normalize)
@@ -78,16 +91,19 @@ public final class DREAMS {
         // PCA preprocessing (high-dim -> pcaDim) before KNN.
         let xForKNN: MLXArray
         if let pcaDim, dim > pcaDim {
+            log("Applying PCA: \(dim) -> \(pcaDim) dims...")
             xForKNN = pcaReduce(xMx, dim: pcaDim)
         } else {
             xForKNN = xMx
         }
 
         let k = min(Int(3 * perplexity), n - 1)
+        log("Computing k-NN...")
         let (knnIndices, knnDists) = computeKNN(
             xForKNN, k: k, method: knnMethod,
             returnEuclidean: false, randomState: randomState, verbose: verbose > 0)
 
+        log("Building affinity graph...")
         let (edgeFrom, edgeTo, edgeWeights) = buildPMatrix(knnIndices, knnDists, perplexity: perplexity, n: n)
         eval(edgeFrom, edgeTo, edgeWeights)
 
@@ -109,6 +125,7 @@ public final class DREAMS {
         eval(yTildeNorm)
         let lam = self.lam
         let nF = Float(n)
+        log("Starting optimization...")
         y = optimizeTSNEFamily(
             edgeFrom: edgeFrom, edgeTo: edgeTo, edgeWeights: edgeWeights, y: y, n: n,
             learningRate: learningRate, earlyExaggeration: earlyExaggeration,

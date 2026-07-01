@@ -46,6 +46,12 @@ public final class CNE {
     /// is unset. Independent of the internal graph-eval cadence (memory safeguard).
     public var progressEvery: Int = 10
 
+    /// Optional phase hook, called at each setup milestone during `fitTransform`
+    /// (PCA preprocess, KNN build, edge-graph construction, optimization start) with
+    /// a short human-readable label. Lets callers surface the otherwise-silent
+    /// pre-optimization work to a UI. Fires regardless of `verbose`; no-op when unset.
+    public var onPhase: ((String) -> Void)?
+
     public init(
         nComponents: Int = 2,
         nNeighbors: Int = 15,
@@ -74,23 +80,28 @@ public final class CNE {
         self.normalize = normalize
     }
 
+    private func log(_ msg: @autoclosure () -> String) {
+        guard verbose || onPhase != nil else { return }
+        let s = msg()
+        if verbose { print(s) }
+        onPhase?(s)
+    }
+
     /// Fit CNE and return the embedding `(nSamples, nComponents)`.
     public func fitTransform(_ x0: MLXArray) -> MLXArray {
         var x = normalizeInput(x0.asType(.float32), method: normalize)
         let n = x.dim(0)
         let dim = x.dim(1)
 
-        if verbose {
-            print("CNE: \(n) points, \(dim) dims, loss=\(loss), k=\(nNeighbors), m=\(nNegatives)")
-        }
+        log("CNE: \(n) points, \(dim) dims, loss=\(loss), k=\(nNeighbors), m=\(nNegatives)")
 
         // PCA preprocessing for high-dimensional input.
         if let pcaDim, dim > pcaDim {
-            if verbose { print("PCA: \(dim) -> \(pcaDim) dims...") }
+            log("PCA: \(dim) -> \(pcaDim) dims...")
             x = pcaReduce(x, dim: pcaDim)
         }
 
-        if verbose { print("Computing k-NN...") }
+        log("Computing k-NN...")
         let (knnIndices, _) = computeKNN(
             x, k: nNeighbors, method: knnMethod,
             returnEuclidean: true, randomState: randomState, verbose: verbose)
@@ -98,7 +109,7 @@ public final class CNE {
         // Build symmetrized, deduplicated, self-loop-free edge list (CPU).
         let edges = Self.buildEdges(knnIndices, n: n)
         let nEdges = edges.dim(0)
-        if verbose { print("Graph: \(nEdges) edges (symmetrized)") }
+        log("Graph: \(nEdges) edges (symmetrized)")
 
         // PCA initialization scaled by 0.01.
         var y = pcaReduce(x, dim: nComponents) * 0.01
@@ -282,7 +293,7 @@ public final class CNE {
         let invM = 1.0 / Float(nNeg)
         let fullBatch = batchSize >= nEdges
 
-        if verbose { print("Starting optimization...") }
+        log("Starting optimization...")
 
         if onEpoch != nil { eval(y); onEpoch?(0, nIter, y) }  // initial frame
         for itr in 1...max(1, nIter) {
