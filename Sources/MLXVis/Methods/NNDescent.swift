@@ -123,16 +123,50 @@ public final class NNDescent {
 
     /// Squared distances from each point i to col_ids[i, :].
     /// X: (n,d), sqNorms: (n,), colIds: (n,c) -> (n,c).
+    ///
+    /// The gathered targets form an (n, c, d) tensor; for large n with a wide
+    /// candidate set (c grows ~k² during the descent) that single allocation can
+    /// reach tens of GB and overflow the Metal buffer limit. Tile over row blocks
+    /// so peak memory is bounded to roughly one block's (rowChunk, c, d) — the
+    /// result is bit-identical, only the materialisation is staged.
     static func gatherDists(_ x: MLXArray, _ sqNorms: MLXArray, _ colIds: MLXArray) -> MLXArray {
         let n = colIds.dim(0)
         let c = colIds.dim(1)
         let d = x.dim(1)
-        let flat = colIds.reshaped([-1])
-        let xTgt = x[flat].reshaped([n, c, d])
-        // dots[i,c] = sum_d x[i,d] * xTgt[i,c,d]
-        let dots = einsum("id,icd->ic", x, xTgt)
-        let nbrNorms = sqNorms[flat].reshaped([n, c])
-        return maximum(sqNorms.expandedDimensions(axis: 1) + nbrNorms - 2.0 * dots, 0.0)
+        // Target ~1 GB of float32 for the (rowChunk, c, d) working set.
+        let elemBudget = 256_000_000
+        let rowChunk = max(1, min(n, elemBudget / max(1, c * d)))
+        if rowChunk >= n {
+            return gatherDistsBlock(x, sqNorms, colIds, lo: 0, hi: n)
+        }
+        var parts: [MLXArray] = []
+        var start = 0
+        while start < n {
+            let end = min(start + rowChunk, n)
+            let block = gatherDistsBlock(x, sqNorms, colIds, lo: start, hi: end)
+            // Materialise each block now so the wide (block, c, d) intermediate is
+            // freed before the next block — bounded peak, no accumulation.
+            asyncEval(block)
+            parts.append(block)
+            start = end
+        }
+        return concatenated(parts, axis: 0)
+    }
+
+    /// `gatherDists` restricted to rows `lo..<hi` (the tiling primitive).
+    private static func gatherDistsBlock(
+        _ x: MLXArray, _ sqNorms: MLXArray, _ colIds: MLXArray, lo: Int, hi: Int
+    ) -> MLXArray {
+        let c = colIds.dim(1)
+        let d = x.dim(1)
+        let rc = hi - lo
+        let xRows = x[lo ..< hi]                          // (rc, d)
+        let flat = colIds[lo ..< hi].reshaped([-1])       // (rc*c,)
+        let xTgt = x[flat].reshaped([rc, c, d])           // (rc, c, d)
+        // dots[i,c] = sum_d xRows[i,d] * xTgt[i,c,d]
+        let dots = einsum("id,icd->ic", xRows, xTgt)
+        let nbrNorms = sqNorms[flat].reshaped([rc, c])
+        return maximum(sqNorms[lo ..< hi].expandedDimensions(axis: 1) + nbrNorms - 2.0 * dots, 0.0)
     }
 
     /// For each edge (i -> j), record i as a reverse candidate of j.

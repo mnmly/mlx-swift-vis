@@ -1,7 +1,7 @@
 import MLX
 import XCTest
 
-import MLXVis
+@testable import MLXVis
 
 final class CoreTests: XCTestCase {
     func testPCAShape() {
@@ -254,6 +254,31 @@ final class CoreTests: XCTestCase {
             "TSNE should announce the KNN phase: \(tsne)")
         XCTAssertTrue(tsne.contains { $0.localizedCaseInsensitiveContains("affinity") },
             "TSNE should announce the affinity-graph phase: \(tsne)")
+    }
+
+    /// `NNDescent.gatherDists` tiles over rows when the (n, c, d) target set is
+    /// large. The tiled result must be bit-identical to the single-shot form —
+    /// this guards the OOM fix (a wide candidate set on large n would otherwise
+    /// allocate tens of GB at once). Dimensions here force `rowChunk < n`.
+    func testGatherDistsChunkingEquivalence() {
+        let n = 2000, d = 200, c = 1000        // c*d large enough to trigger tiling
+        let x = MLXRandom.normal([n, d])
+        let sq = (x * x).sum(axis: 1)
+        eval(x, sq)
+        let colIds = MLXRandom.randInt(0 ..< Int32(n), [n, c]).asType(.int32)
+        eval(colIds)
+
+        let got = NNDescent.gatherDists(x, sq, colIds)
+
+        // Single-shot reference (the pre-tiling formula).
+        let flat = colIds.reshaped([-1])
+        let xTgt = x[flat].reshaped([n, c, d])
+        let dots = einsum("id,icd->ic", x, xTgt)
+        let ref = maximum(sq.expandedDimensions(axis: 1) + sq[flat].reshaped([n, c]) - 2.0 * dots, 0.0)
+
+        let maxAbs = MLX.abs(got - ref).max().item(Float.self)
+        XCTAssertEqual(got.shape, [n, c])
+        XCTAssertLessThan(maxAbs, 1e-2, "tiled gatherDists diverges from single-shot (Δ=\(maxAbs))")
     }
 }
 
