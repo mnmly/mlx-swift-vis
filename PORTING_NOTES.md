@@ -95,6 +95,34 @@ numpy-identical, so they can't bit-match; they're covered by shape/NaN tests.
 - **UMAP scheduler** keeps its per-epoch active-edge index sets host-side
   (`[[Int32]]`) and materializes each `MLXArray` lazily inside the loop, instead of
   holding `nEpochs` index arrays on-GPU for the whole optimization — flat peak memory.
+- **PaCMAP/LocalMAP far-pair sampling is vectorized on-GPU** (`sampleFPPairs`). The
+  original per-point CPU rejection loop issued a `MLXRandom.randInt(...).asArray()` — a
+  GPU roundtrip + host sync — *per point*, which dominated a large-n fit (~40 s of a
+  53 s PaCMAP(150k) run). It now draws one oversampled `(n, S)` candidate block, masks
+  self + each point's `nNeighbors` neighbours, and keeps the first `nFP` valid per row
+  via a valid-first argsort (same shape as `resampleLocalFPPairs`). **PaCMAP(150k):
+  52.6 s → 9.5 s (5.5×)**; cluster separation preserved (guarded by new
+  `GoldenTests.testPaCMAP/LocalMAPSeparatesClusters`). The vectorized sampler may pick
+  an occasional duplicate far-pair — harmless, same tolerance as the reference's random
+  draws. Lesson: a `.asArray()` / `.item()` inside a per-row loop is a per-row GPU sync;
+  it is invisible at n≈10³ and lethal at n≈10⁵ — always sample the whole `(n, …)` block
+  at once.
+- **UMAP negative-sampling `negFrom` is a tile, not an arange+gather.** Each active
+  edge gets `negativeSampleRate` negatives whose source is that edge's `from` endpoint,
+  so `negFrom[j] = ef[j % nActive]` — i.e. `ef` tiled. The old code built this with
+  `MLXArray(0 ..< nNeg)` (a **host-materialised** arange of up to ~11 M elements *per
+  epoch*), a `floorDivide`, and a gather; that arange alone was the loop's dominant cost
+  (~0.05–0.12 s/epoch, dwarfing the actual gradient/scatter at ~0.006 s). Replacing it
+  with `tiled(ef, repetitions: [negativeSampleRate])` took **UMAP(150k): 45 s → 4 s
+  (11×)** with bit-identical output (same `negFrom`, same RNG draw for `negTo`; guarded
+  by `GoldenTests.testUMAPSeparatesClusters`). Lesson (again): a per-epoch
+  `MLXArray(0 ..< bigN)` range-init is a hidden host allocation+copy; build repeated
+  index patterns with `tiled`/`broadcast`, never a fresh arange in the loop.
+- **All eight layouts are linear + fast at n=150k** after the above + the fp16 KNN gather
+  (v0.3.0): UMAP ~4 s, PaCMAP/LocalMAP ~9.5 s, TSNE/DREAMS ~30 s (KNN-bound), TriMap
+  ~2 s, CNE ~7 s, MMAE ~3 s. Compiling UMAP's per-edge gradient was tried and reverted —
+  once the arange was gone the gradient was already negligible, so the compile bought
+  nothing and only added a shapeless-kernel abstraction.
 
 ### No memory leak — verified across the whole module
 

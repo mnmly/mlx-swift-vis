@@ -75,6 +75,22 @@ final class GoldenTests: XCTestCase {
         XCTAssertGreaterThan(r, 2.0, "UMAP failed to separate clusters")
     }
 
+    func testPaCMAPSeparatesClusters() {
+        let (x, labels) = clusters()
+        let y = PaCMAP(nComponents: 2, nNeighbors: 10, randomState: 0).fitTransform(x)
+        let r = separationRatio(y, labels)
+        print("PaCMAP separation ratio: \(r)")
+        XCTAssertGreaterThan(r, 2.0, "PaCMAP failed to separate clusters")
+    }
+
+    func testLocalMAPSeparatesClusters() {
+        let (x, labels) = clusters()
+        let y = LocalMAP(nComponents: 2, nNeighbors: 10, randomState: 0, lowDistThres: 10.0).fitTransform(x)
+        let r = separationRatio(y, labels)
+        print("LocalMAP separation ratio: \(r)")
+        XCTAssertGreaterThan(r, 2.0, "LocalMAP failed to separate clusters")
+    }
+
     func testTSNESeparatesClusters() {
         let (x, labels) = clusters()
         let y = TSNE(nComponents: 2, perplexity: 30, nIter: 500, randomState: 0, pcaDim: 15).fitTransform(x)

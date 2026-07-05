@@ -209,76 +209,44 @@ public class PaCMAP {
     }
 
     /// Sample further pairs (repulsive), excluding self and the sampled nearest neighbours.
-    /// Done on CPU with Swift sets, mirroring the reference's rejection sampling.
-    /// `neighborDst` is the flattened nn dst array (length n*nNeighbors) or nil.
+    ///
+    /// Fully vectorized on GPU (mirrors ``resampleLocalFPPairs``): draw an oversampled
+    /// `(n, S)` candidate block in one shot, mask self + the point's `nNeighbors`
+    /// neighbours, then keep the first `nFP` valid per row via a valid-first argsort.
+    /// Replaces the previous per-point CPU rejection loop, which issued a GPU roundtrip
+    /// per point (the dominant cost of a large-n PaCMAP/LocalMAP fit). `neighborDst` is
+    /// the flattened nn dst array (length `n*nNeighbors`), reshaped to `(n, nNeighbors)`.
+    ///
+    /// Only ~`nNeighbors + 1` of `n` values are excluded, so `S = 2·nFP + nNeighbors + 8`
+    /// yields ≥ `nFP` valid candidates per row with overwhelming probability; as with
+    /// the reference's random sampling, an occasional duplicate far-pair is harmless.
     private func sampleFPPairs(
-        n: Int, neighborDst: [Int32]?, nNeighbors: Int, nFP: Int
+        n: Int, neighborDst: MLXArray?, nNeighbors: Int, nFP: Int
     ) -> (MLXArray, MLXArray) {
         if nFP == 0 {
             return (MLXArray([] as [Int32]), MLXArray([] as [Int32]))
         }
 
-        var srcArr = [Int32](repeating: 0, count: n * nFP)
-        var dstArr = [Int32](repeating: 0, count: n * nFP)
-
-        let sampleFactor = max(16, 4 * nFP)
-        let maxRounds = 24
-
-        for i in 0..<n {
-            var reject = Set<Int32>()
-            reject.insert(Int32(i))
-            if let nbr = neighborDst {
-                for k in 0..<nNeighbors {
-                    reject.insert(nbr[i * nNeighbors + k])
-                }
-            }
-
-            var chosen: [Int32] = []
-            var chosenSet = Set<Int32>()
-            var rounds = 0
-            while chosen.count < nFP && rounds < maxRounds {
-                let remaining = nFP - chosen.count
-                let batchSize = max(sampleFactor, remaining * sampleFactor)
-                let cands = MLXRandom.randInt(0 ..< Int32(n), [batchSize]).asArray(Int32.self)
-                for c in cands {
-                    if reject.contains(c) || chosenSet.contains(c) { continue }
-                    chosen.append(c)
-                    chosenSet.insert(c)
-                    if chosen.count == nFP { break }
-                }
-                rounds += 1
-            }
-
-            // Fallback: explicit remaining pool (dense neighbourhoods exhaust random draws).
-            if chosen.count < nFP {
-                var unavailable = reject
-                unavailable.formUnion(chosenSet)
-                var pool: [Int32] = []
-                pool.reserveCapacity(n)
-                for v in 0..<n where !unavailable.contains(Int32(v)) {
-                    pool.append(Int32(v))
-                }
-                if pool.isEmpty {
-                    // Degenerate: keep only self out.
-                    pool.reserveCapacity(n - 1)
-                    for v in 0..<n where Int32(v) != Int32(i) { pool.append(Int32(v)) }
-                }
-                let need = nFP - chosen.count
-                if !pool.isEmpty {
-                    for _ in 0..<need {
-                        let r = Int(MLXRandom.randInt(0 ..< Int32(pool.count), [1]).item(Int32.self))
-                        chosen.append(pool[r])
-                    }
-                }
-            }
-
-            for j in 0..<nFP {
-                srcArr[i * nFP + j] = Int32(i)
-                dstArr[i * nFP + j] = chosen[j]
+        let sampleSize = max(2 * nFP + nNeighbors + 8, 32)
+        let candidates = MLXRandom.randInt(0 ..< Int32(n), [n, sampleSize]).asType(.int32)  // (n, S)
+        let srcIds = MLXArray(Int32(0) ..< Int32(n)).reshaped([n, 1])
+        var mask = candidates .!= srcIds
+        if let nbr = neighborDst, nNeighbors > 0 {
+            let nbCols = nbr.reshaped([n, nNeighbors])  // (n, K)
+            for k in 0..<nNeighbors {
+                mask = mask & (candidates .!= nbCols[0..., k ..< (k + 1)])
             }
         }
 
-        return (MLXArray(srcArr), MLXArray(dstArr))
+        // Valid candidates sort to the front (invalid → key = sampleSize); take nFP.
+        let colIdx = broadcast(
+            MLXArray(Int32(0) ..< Int32(sampleSize)).reshaped([1, sampleSize]), to: [n, sampleSize])
+        let sortKey = MLX.where(mask, colIdx, MLXArray(Int32(sampleSize)))
+        let order = argSort(sortKey, axis: 1)
+        let dst = takeAlong(candidates, order, axis: 1)[0..., ..<nFP]  // (n, nFP)
+        let src = broadcast(srcIds, to: [n, nFP])
+        eval(src, dst)
+        return (src.reshaped([-1]), dst.reshaped([-1]))
     }
 
     /// Resample further pairs using embedding-space locality (LocalMAP, pure GPU).
@@ -456,9 +424,9 @@ public class PaCMAP {
         let (srcMN, dstMN) = sampleMNPairs(xProc, nMN: nMN, n: n)
 
         log("Sampling FP pairs...")
-        let dstNNArr = nNeighborsLocal > 0 ? dstNN.asArray(Int32.self) : nil
+        let neighborDstForFP: MLXArray? = nNeighborsLocal > 0 ? dstNN : nil
         var (srcFP, dstFP) = sampleFPPairs(
-            n: n, neighborDst: dstNNArr, nNeighbors: nNeighborsLocal, nFP: nFP)
+            n: n, neighborDst: neighborDstForFP, nNeighbors: nNeighborsLocal, nFP: nFP)
         eval(srcFP, dstFP)
 
         // Initialise embedding (PCA init scaled by 0.01).
