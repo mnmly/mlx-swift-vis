@@ -8,10 +8,14 @@
 //   4. convergence test on the fraction of changed edges.
 //
 // Deviations from the Python source (all performance-only, not algorithmic):
-//   - No fp16 matmul / low-dim random-projection early iters (Python uses these
-//     purely to cut FLOPs; full-dim fp32 distances are used throughout here).
-//   - No row/memory chunking or active-point pruning (single-shot per iter).
-//   These omissions do not change the produced graph, only peak memory / speed.
+//   - fp16 candidate distances (`useFP16Dists`, default on) — the memory-bandwidth
+//     lever for large n (~5× at 150k where fp32 spills into memory pressure). Data is
+//     max-abs-normalised into a fp16-safe range first so recall is preserved (~0.997)
+//     across input magnitudes; distances only rank candidates. See PORTING_NOTES.
+//   - No low-dim random-projection early iters (Python uses this to cut FLOPs further).
+//   - No active-point pruning (single-shot per iter). Bounding the k² join width was
+//     tried and rejected — it wrecks convergence recall (see PORTING_NOTES).
+//   Row/memory chunking of the distance gather IS done (see `gatherDists`).
 
 import Foundation
 import MLX
@@ -24,6 +28,14 @@ public final class NNDescent {
     public let randomState: Int
     public let verbose: Bool
 
+    /// Use fp16 for the candidate distance gather (`gatherDists`). The wide
+    /// `(n, c, d)` working set in the early iterations is memory-bandwidth bound;
+    /// half precision halves its bytes for a ~1.4× large-`n` speedup. Distances are
+    /// only used to *rank* candidates and the data is normalised into a fp16-safe
+    /// range first, so recall is essentially unchanged (~0.997 → 0.997) across input
+    /// magnitudes. Set `false` to force the exact fp32 gather. See PORTING_NOTES.
+    public var useFP16Dists: Bool = true
+
     public init(k: Int, randomState: Int = 42, verbose: Bool = false) {
         self.k = k
         self.nIters = 20
@@ -35,12 +47,20 @@ public final class NNDescent {
     /// Build the approximate KNN graph.
     /// - Returns: `(indices, distances)` with Euclidean distances.
     public func build(_ x0: MLXArray) -> (indices: MLXArray, distances: MLXArray) {
-        let x = x0.asType(.float32)
-        let n = x.dim(0)
+        let x0f = x0.asType(.float32)
+        let n = x0f.dim(0)
         let k = min(self.k, n - 1)
         let mc = k
 
         MLXRandom.seed(UInt64(randomState))
+
+        // fp16 distances overflow / lose all precision for large-magnitude inputs
+        // (recall collapses). Normalise into a fp16-safe range by the max abs value;
+        // ranking / top-k is scale-invariant, so the whole descent runs in scaled units
+        // and the final distances are multiplied back by `distScale`. No-op for fp32.
+        let distScale: Float = useFP16Dists
+            ? MLX.maximum(MLX.abs(x0f).max(), MLXArray(Float(1e-12))).item(Float.self) : 1.0
+        let x = useFP16Dists ? x0f / distScale : x0f
 
         // Precompute squared norms (n,).
         let sqNorms = (x * x).sum(axis: 1)
@@ -53,7 +73,7 @@ public final class NNDescent {
         indices = MLX.where(indices .>= rowIdx, indices + 1, indices).asType(.int32)
 
         // Initial distances + sort ascending.
-        var dists = NNDescent.gatherDists(x, sqNorms, indices)
+        var dists = NNDescent.gatherDists(x, sqNorms, indices, fp16: useFP16Dists)
         let si = argSort(dists, axis: 1)
         indices = takeAlong(indices, si, axis: 1)
         dists = takeAlong(dists, si, axis: 1)
@@ -88,7 +108,7 @@ public final class NNDescent {
             }
 
             // Distances for the new candidates; reuse stored dists for current.
-            let newD = NNDescent.gatherDists(x, sqNorms, newCands)
+            let newD = NNDescent.gatherDists(x, sqNorms, newCands, fp16: useFP16Dists)
 
             // Merge current + new, mask self-edges, dedup, take top-k.
             let allCands = concatenated([indices, newCands], axis: 1)
@@ -116,7 +136,8 @@ public final class NNDescent {
             }
         }
 
-        let finalDists = MLX.sqrt(maximum(dists, 0.0))
+        // Undo the fp16 normalisation on the returned distances (ranking was invariant).
+        let finalDists = MLX.sqrt(maximum(dists, 0.0)) * distScale
         eval(indices, finalDists)
         return (indices.asType(.int32), finalDists)
     }
@@ -129,21 +150,24 @@ public final class NNDescent {
     /// reach tens of GB and overflow the Metal buffer limit. Tile over row blocks
     /// so peak memory is bounded to roughly one block's (rowChunk, c, d) — the
     /// result is bit-identical, only the materialisation is staged.
-    static func gatherDists(_ x: MLXArray, _ sqNorms: MLXArray, _ colIds: MLXArray) -> MLXArray {
+    static func gatherDists(_ x: MLXArray, _ sqNorms: MLXArray, _ colIds: MLXArray, fp16: Bool = false) -> MLXArray {
         let n = colIds.dim(0)
         let c = colIds.dim(1)
         let d = x.dim(1)
+        // fp16 candidate data halves the (rowChunk, c, d) bytes; norms stay fp32 so the
+        // squared-distance combine keeps its precision (only the dot product is fp16).
+        let xg = fp16 ? x.asType(.float16) : x
         // Target ~1 GB of float32 for the (rowChunk, c, d) working set.
         let elemBudget = 256_000_000
         let rowChunk = max(1, min(n, elemBudget / max(1, c * d)))
         if rowChunk >= n {
-            return gatherDistsBlock(x, sqNorms, colIds, lo: 0, hi: n)
+            return gatherDistsBlock(xg, sqNorms, colIds, lo: 0, hi: n)
         }
         var parts: [MLXArray] = []
         var start = 0
         while start < n {
             let end = min(start + rowChunk, n)
-            let block = gatherDistsBlock(x, sqNorms, colIds, lo: start, hi: end)
+            let block = gatherDistsBlock(xg, sqNorms, colIds, lo: start, hi: end)
             // Materialise each block now so the wide (block, c, d) intermediate is
             // freed before the next block — bounded peak, no accumulation.
             asyncEval(block)

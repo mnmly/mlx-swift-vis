@@ -4,7 +4,7 @@
 // Uses a sparse P matrix (KNN) and momentum-based gradient descent with adaptive
 // gains. The repulsive force, P-matrix, and optimizer loop are shared with DREAMS
 // via Core/{AffinityGraph,Repulsion,TSNEOptimizer}.swift; ``TSNERepulsion`` picks
-// the FFT (n >= 16000, 2D), full, or chunked path automatically.
+// the FFT (n >= 4000, 2D), full, or chunked path automatically.
 
 import Foundation
 import MLX

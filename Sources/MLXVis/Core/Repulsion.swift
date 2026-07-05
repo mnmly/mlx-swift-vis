@@ -30,7 +30,12 @@ public struct TSNERepulsion {
     ///   - dims: embedding dimensionality (FFT path requires 2).
     public init(n: Int, dims: Int) {
         self.n = n
-        let useFFT = n >= 16000 && dims == 2
+        // FFT (FIt-SNE) is O(n + ng^2 log ng) with a fixed grid-cost floor, so it only
+        // wins once the exact O(n^2) path exceeds that floor — measured crossover ≈ 3000
+        // (see PORTING_NOTES). Gate at 4000 to sit safely on the winning side while
+        // keeping small-n on the cheaper, exact path (also more accurate there; FFT's
+        // interpolation error is validated down to n=3000 by CoreTests).
+        let useFFT = n >= 4000 && dims == 2
         let fullLimit = 1_000_000_000
         let useFull = !useFFT && (n * n * 4) < fullLimit
         self.chunkSize = min(n, max(512, 2_000_000_000 / (n * 4)))
