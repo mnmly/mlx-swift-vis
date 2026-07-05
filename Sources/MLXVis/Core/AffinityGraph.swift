@@ -39,7 +39,7 @@ public func reverseEdgeValues(rows: MLXArray, cols: MLXArray, vals: MLXArray, n:
 ///
 /// - Parameters:
 ///   - knnIndices: `(n, k)` neighbor indices.
-///   - knnDists: `(n, k)` neighbor distances (the reference passes squared distances;
+///   - knnDists0: `(n, k)` neighbor distances (the reference passes squared distances;
 ///     they are squared again as the bandwidth input — mirrored here for parity).
 ///   - perplexity: target perplexity.
 ///   - n: number of points.
