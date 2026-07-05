@@ -136,6 +136,8 @@ public final class TriMap {
         log("Starting optimization...")
         if onEpoch != nil { eval(y); onEpoch?(0, max(1, nIters), y) }  // initial frame
         for itr in 1...max(1, nIters) {
+            // Cooperative cancellation: return the best-so-far embedding. No-op outside a Task.
+            if Task.isCancelled { break }
             let grad = computeGradient(y: y, triplets: triplets, weights: weights)
 
             // Gain update: shrink if grad and velocity agree in sign, grow otherwise.

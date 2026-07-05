@@ -454,6 +454,8 @@ public class PaCMAP {
         log("Starting optimisation...")
         if onEpoch != nil { eval(y); onEpoch?(0, numItersTotal, y) }  // initial frame
         for itr in 0..<numItersTotal {
+            // Cooperative cancellation: return the best-so-far embedding. No-op outside a Task.
+            if Task.isCancelled { break }
             let lrT = Float(
                 Double(lr) * sqrt(1.0 - pow(beta2, Double(itr + 1)))
                     / (1.0 - pow(beta1, Double(itr + 1))))

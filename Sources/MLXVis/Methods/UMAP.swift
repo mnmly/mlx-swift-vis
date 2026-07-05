@@ -329,6 +329,8 @@ public final class UMAP {
         // elementwise part — tried and measured — buys nothing here.
         if onEpoch != nil { eval(y); onEpoch?(0, nEpochs, y) }  // initial frame
         for epoch in 0..<nEpochs {
+            // Cooperative cancellation: return the best-so-far embedding. No-op outside a Task.
+            if Task.isCancelled { break }
             guard let active = activeSets[epoch] else { continue }
             let activeMx = MLXArray(active)
             let ef = edgeFrom[activeMx]

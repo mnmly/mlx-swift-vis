@@ -233,6 +233,9 @@ public final class MMAE {
             model.train()
         }
         for epoch in 0..<nEpochs {
+            // Cooperative cancellation: stop training and encode the best-so-far model
+            // below to return a (partial) embedding. No-op outside a Task.
+            if Task.isCancelled { break }
             // Sample trainN distinct indices (replace=False) on CPU, matching Python.
             let perm = MMAE.choice(n: n, count: trainN)
             let xShuf = take(xTrain, perm, axis: 0)

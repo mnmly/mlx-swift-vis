@@ -297,6 +297,8 @@ public final class CNE {
 
         if onEpoch != nil { eval(y); onEpoch?(0, nIter, y) }  // initial frame
         for itr in 1...max(1, nIter) {
+            // Cooperative cancellation: return the best-so-far embedding. No-op outside a Task.
+            if Task.isCancelled { break }
             let batchEdges: MLXArray
             if !fullBatch {
                 let idx = MLXRandom.randInt(0 ..< nEdges, [batchSize])
