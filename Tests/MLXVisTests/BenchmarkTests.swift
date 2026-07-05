@@ -58,7 +58,7 @@ final class BenchmarkTests: XCTestCase {
         XCTAssertLessThan(compiled, eager * 1.15, "compiled path regressed vs eager")
     }
 
-    /// End-to-end smoke test of the FFT-accelerated path (gate is n >= 16000, 2D).
+    /// End-to-end smoke test of the FFT-accelerated path (gate is n >= 4000, 2D).
     func testFFTEndToEnd() {
         let n = 16000
         let x = data(n, 20)

@@ -90,4 +90,18 @@ final class GoldenTests: XCTestCase {
         print("DREAMS separation ratio: \(r)")
         XCTAssertGreaterThan(r, 2.0, "DREAMS failed to separate clusters")
     }
+
+    /// n = 4500 (> the FFT gate of 4000) so the repulsive force runs through the
+    /// FFT-accelerated path. Guards that lowering the gate from 16000 keeps t-SNE /
+    /// DREAMS embeddings well-separated (and NaN-free) in the newly-FFT range.
+    func testDREAMSSeparatesClustersOnFFTPath() {
+        let (x, labels) = clusters(perCluster: 1500)  // 3 × 1500 = 4500 > 4000
+        XCTAssertGreaterThanOrEqual(x.dim(0), 4000, "must exceed FFT gate")
+        let y = DREAMS(nComponents: 2, perplexity: 30, nIter: 500, pcaDim: 15, randomState: 0).fitTransform(x)
+        eval(y)
+        XCTAssertFalse(MLX.any(y .!= y).item(Bool.self), "FFT-path DREAMS produced NaN")
+        let r = separationRatio(y, labels)
+        print("DREAMS (FFT path, n=\(x.dim(0))) separation ratio: \(r)")
+        XCTAssertGreaterThan(r, 2.0, "DREAMS on FFT path failed to separate clusters")
+    }
 }
