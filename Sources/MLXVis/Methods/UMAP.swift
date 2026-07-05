@@ -324,23 +324,23 @@ public final class UMAP {
         // NOTE: the per-edge SGD step is intentionally NOT compiled. Its scatter-add
         // updates have a variable-length index (the active-edge set changes every
         // epoch), which `compile(shapeless:)` cannot shape-infer, and non-shapeless
-        // would recompile every epoch. It is also cheap relative to the O(n^2)
-        // attractive/repulsive work, so compilation buys little here.
+        // would recompile every epoch. With the negative-sampling arange removed (see
+        // below) the gradient itself is negligible (~0.006 s/epoch), so compiling the
+        // elementwise part — tried and measured — buys nothing here.
         if onEpoch != nil { eval(y); onEpoch?(0, nEpochs, y) }  // initial frame
         for epoch in 0..<nEpochs {
             guard let active = activeSets[epoch] else { continue }
             let activeMx = MLXArray(active)
             let ef = edgeFrom[activeMx]
             let et = edgeTo[activeMx]
-            let nActive = activeMx.dim(0)
             let alphaEpoch = alpha * (1.0 - Float(epoch) / Float(nEpochs))
 
-            // Negative sampling: fixed rate per active edge.
-            let nNeg = negativeSampleRate * nActive
-            let pat = MLXArray(Int32(0) ..< Int32(nNeg))
-            let modIdx = pat - floorDivide(pat, MLXArray(Int32(nActive))) * nActive
-            let negFrom = ef[modIdx]
-            let negTo = MLXRandom.randInt(0 ..< n, [nNeg])
+            // Negative sampling: `negativeSampleRate` negatives per active edge. Each
+            // negative's source is the active edge's `from` endpoint, so `negFrom` is
+            // just `ef` tiled — avoid the old arange+floorDivide+gather (a host-
+            // materialized `arange(nNeg)` per epoch was the loop's dominant cost).
+            let negFrom = tiled(ef, repetitions: [negativeSampleRate])
+            let negTo = MLXRandom.randInt(0 ..< n, [negativeSampleRate * ef.dim(0)])
 
             y = Self.sgdStepGraph(y, ef: ef, et: et, negFrom: negFrom, negTo: negTo,
                                   alphaEpoch: MLXArray(alphaEpoch), a: a, b: b)[0]
