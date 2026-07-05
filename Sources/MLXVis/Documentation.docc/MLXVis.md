@@ -27,6 +27,26 @@ For `n > 20000`, the methods automatically use approximate ``NNDescent`` for the
 k-nearest-neighbor graph; below that they use exact GPU brute force. t-SNE and
 DREAMS use an FFT-accelerated repulsive force for large 2-D embeddings.
 
+### Cancelling a fit
+
+`fitTransform(_:)` is synchronous but honors **cooperative cancellation**: run it
+inside a `Task` and cancel that task, and the optimization loop stops at the next
+epoch and returns the **best-so-far embedding** (correctly shaped, mean-centered —
+it never throws). This suits "good enough, stop now" UX and abandoning a fit with
+the wrong parameters.
+
+```swift
+let task = Task { UMAP(nComponents: 2, nNeighbors: 15).fitTransform(x) }
+// … later, e.g. the user taps Cancel:
+task.cancel()
+let partial = await task.value        // best-so-far embedding, shape (n, 2)
+```
+
+Cancellation is checked every epoch (pair it with ``UMAP/onEpoch`` for progressive
+previews). It cannot interrupt an in-flight MLX evaluation, so a long setup step —
+the KNN build in particular — runs to completion before the check takes effect;
+cancelling during setup returns the initial embedding once that step finishes.
+
 ## Topics
 
 ### Manifold learning

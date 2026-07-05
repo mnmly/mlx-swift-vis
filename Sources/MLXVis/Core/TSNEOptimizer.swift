@@ -39,6 +39,9 @@ func optimizeTSNEFamily(
 
     if onEpoch != nil { eval(y); onEpoch?(0, nEpochs, y) }  // initial frame
     for epoch in 0..<nEpochs {
+        // Cooperative cancellation: if the caller's Task is cancelled, stop and return
+        // the best-so-far embedding (already mean-centered). No-op outside a Task.
+        if Task.isCancelled { break }
         let momentum: Float = epoch < 250 ? 0.5 : 0.8
         let w = epoch < earlyExaggerationIter ? weightsExag : edgeWeights
 
