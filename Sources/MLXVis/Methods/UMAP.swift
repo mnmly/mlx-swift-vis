@@ -5,6 +5,47 @@ import Foundation
 import MLX
 import MLXRandom
 
+/// Bounded single-producer / single-consumer queue of per-epoch active-edge index
+/// sets. Lets UMAP's host-side schedule computation run on a background thread that
+/// races ahead of the GPU optimizer (see `UMAP.optimize`). Backpressure caps the
+/// number of buffered epochs, so peak memory stays a small multiple of one epoch's
+/// active set — far below precomputing all `nEpochs` sets up front.
+private final class ScheduleQueue: @unchecked Sendable {
+    private let cond = NSCondition()
+    private var buffer: [[Int32]] = []
+    private var finished = false
+    private var stopped = false
+    private let capacity: Int
+    init(capacity: Int) { self.capacity = capacity }
+
+    /// Producer: blocks while the buffer is full. Returns false once the consumer
+    /// asked to stop — the producer should then exit.
+    func push(_ item: [Int32]) -> Bool {
+        cond.lock(); defer { cond.unlock() }
+        while buffer.count >= capacity && !stopped { cond.wait() }
+        if stopped { return false }
+        buffer.append(item)
+        cond.signal()
+        return true
+    }
+
+    /// Producer: no more items will be pushed.
+    func finish() { cond.lock(); finished = true; cond.broadcast(); cond.unlock() }
+
+    /// Consumer: signal the producer to stop and drop any backlog.
+    func stop() { cond.lock(); stopped = true; cond.broadcast(); cond.unlock() }
+
+    /// Consumer: blocks until an item is available; nil once drained or stopped.
+    func pop() -> [Int32]? {
+        cond.lock(); defer { cond.unlock() }
+        while buffer.isEmpty && !finished && !stopped { cond.wait() }
+        guard !buffer.isEmpty else { return nil }
+        let v = buffer.removeFirst()
+        cond.signal()   // wake a producer blocked on capacity
+        return v
+    }
+}
+
 /// UMAP dimensionality reduction using MLX on the Metal GPU.
 public final class UMAP {
     public var nComponents: Int
@@ -304,20 +345,35 @@ public final class UMAP {
         }
         var epochsPerNext = epochsPerSample
 
-        // Pre-compute per-epoch active edge index sets on the HOST (cheap Int32
-        // arrays). Keeping these host-side — rather than materializing nEpochs
-        // MLXArrays up front and holding them on-GPU for the whole optimization —
-        // keeps peak GPU memory flat; each epoch's index array is wrapped lazily
-        // inside the loop and freed right after the step.
-        var activeSets = [[Int32]?](repeating: nil, count: nEpochs)
-        for epoch in 0..<nEpochs {
+        // The per-epoch active-edge schedule is O(nEpochs × e) of serial host work
+        // (~4 s at n≈150k) that depends only on the epoch index — never on the GPU
+        // optimization result. So it runs on a BACKGROUND thread that races ahead of
+        // the optimizer through a small bounded queue (double-buffering): the
+        // producer's CPU scan for future epochs overlaps the consumer's GPU SGD
+        // steps, hiding the schedule cost behind the optimization instead of paying
+        // it up front (which froze the first `onEpoch` frame) or inline (which
+        // serialized it with the GPU). `epochsPerNext` is owned solely by the
+        // producer and advanced in strict epoch order, so the emitted active sets —
+        // and thus the embedding — match the serial version exactly.
+        func activeEdges(forEpoch epoch: Int) -> [Int32] {
             var active: [Int32] = []
             for i in 0..<e where epochsPerNext[i] <= Double(epoch) {
                 epochsPerNext[i] += epochsPerSample[i]
                 active.append(Int32(i))
             }
-            activeSets[epoch] = active.isEmpty ? nil : active
+            return active
         }
+        let schedule = ScheduleQueue(capacity: 8)
+        let producerDone = DispatchSemaphore(value: 0)
+        let producer = Thread {
+            for epoch in 0 ..< nEpochs {
+                if !schedule.push(activeEdges(forEpoch: epoch)) { break }   // consumer stopped
+            }
+            schedule.finish()
+            producerDone.signal()
+        }
+        producer.stackSize = 1 << 20
+        producer.start()
 
         let alpha = learningRate
 
@@ -331,7 +387,10 @@ public final class UMAP {
         for epoch in 0..<nEpochs {
             // Cooperative cancellation: return the best-so-far embedding. No-op outside a Task.
             if Task.isCancelled { break }
-            guard let active = activeSets[epoch] else { continue }
+            // Next epoch's active edges from the background producer (blocks only if
+            // the producer hasn't caught up). One item per epoch, in order.
+            guard let active = schedule.pop() else { break }
+            if active.isEmpty { continue }
             let activeMx = MLXArray(active)
             let ef = edgeFrom[activeMx]
             let et = edgeTo[activeMx]
@@ -356,6 +415,10 @@ public final class UMAP {
                 print("Epoch \(epoch + 1)/\(nEpochs)")
             }
         }
+        // Release the producer if we broke out early (cancelled / drained), then wait
+        // for it to exit so its captured schedule state isn't touched after we return.
+        schedule.stop()
+        producerDone.wait()
         return y
     }
 
