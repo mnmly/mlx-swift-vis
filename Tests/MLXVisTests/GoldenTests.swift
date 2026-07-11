@@ -120,4 +120,49 @@ final class GoldenTests: XCTestCase {
         print("DREAMS (FFT path, n=\(x.dim(0))) separation ratio: \(r)")
         XCTAssertGreaterThan(r, 2.0, "DREAMS on FFT path failed to separate clusters")
     }
+
+    /// Dims-generic separation ratio (the 2-D `separationRatio` hardcodes stride 2).
+    private func separationRatioND(_ y: MLXArray, _ labels: [Int], dims: Int) -> Float {
+        let pts = y.asArray(Float.self)
+        let n = y.dim(0)
+        let k = (labels.max() ?? 0) + 1
+        var sum = [[Float]](repeating: [Float](repeating: 0, count: dims), count: k)
+        var cnt = [Int](repeating: 0, count: k)
+        for i in 0..<n {
+            for d in 0..<dims { sum[labels[i]][d] += pts[i * dims + d] }
+            cnt[labels[i]] += 1
+        }
+        let cent = (0..<k).map { c in (0..<dims).map { sum[c][$0] / Float(cnt[c]) } }
+        var radius = [Float](repeating: 0, count: k)
+        for i in 0..<n {
+            var s: Float = 0
+            for d in 0..<dims { let e = pts[i * dims + d] - cent[labels[i]][d]; s += e * e }
+            radius[labels[i]] += s
+        }
+        let rms = (0..<k).map { (radius[$0] / Float(cnt[$0])).squareRoot() }
+        var minRatio = Float.greatestFiniteMagnitude
+        for a in 0..<k {
+            for b in (a + 1)..<k {
+                var s: Float = 0
+                for d in 0..<dims { let e = cent[a][d] - cent[b][d]; s += e * e }
+                minRatio = Swift.min(minRatio, s.squareRoot() / Swift.max(rms[a], rms[b], 1e-6))
+            }
+        }
+        return minRatio
+    }
+
+    /// 3-D FFT repulsion path: n = 4500 (> FFT gate) with `nComponents = 3` exercises
+    /// the 3-D grid interpolation (27-tap) + `rfftn`/`irfftn` convolution. This is the
+    /// path the sketch's default "2-D layout + spin" embedding (3 components) now takes.
+    /// Guards that the 3-D embedding stays separated and NaN-free.
+    func testDREAMS3DOnFFTPath() {
+        let (x, labels) = clusters(perCluster: 1500)  // 4500 > 4000
+        let y = DREAMS(nComponents: 3, perplexity: 30, nIter: 500, pcaDim: 15, randomState: 0).fitTransform(x)
+        eval(y)
+        XCTAssertEqual(y.dim(1), 3)
+        XCTAssertFalse(MLX.any(y .!= y).item(Bool.self), "3-D FFT DREAMS produced NaN")
+        let r = separationRatioND(y, labels, dims: 3)
+        print("DREAMS (3-D FFT path, n=\(x.dim(0))) separation ratio: \(r)")
+        XCTAssertGreaterThan(r, 2.0, "3-D FFT DREAMS failed to separate clusters")
+    }
 }
