@@ -16,9 +16,11 @@ test` cannot load MLX's `default.metallib`.
 ```bash
 xcodebuild -scheme MLXVis -destination 'platform=macOS' -derivedDataPath .xcdd build
 xcodebuild -scheme MLXVis -destination 'platform=macOS' -derivedDataPath .xcdd test
-# Release (benchmarks / leak guard are meaningful only here):
+# Release (benchmarks / leak guard are meaningful only here). `SWIFT_ENABLE_TESTABILITY`
+# is required: the test target uses `@testable import`, which Release otherwise disables.
 xcodebuild -scheme MLXVis -destination 'platform=macOS' -derivedDataPath .xcdd \
-  -configuration Release test -only-testing:MLXVisTests/BenchmarkTests
+  -configuration Release test -only-testing:MLXVisTests/BenchmarkTests \
+  SWIFT_ENABLE_TESTABILITY=YES
 ```
 
 `BenchmarkTests.testMemoryStabilityAllMethods` is the leak guard — it loops every

@@ -42,6 +42,27 @@ public final class TSNE {
     /// pre-optimization work to a UI. Fires regardless of `verbose`; no-op when unset.
     public var onPhase: ((String) -> Void)?
 
+    /// A precomputed k-NN graph to use instead of building one.
+    ///
+    /// Skips the neighbour search — the step that dominates the wall clock for large
+    /// inputs — and feeds the rest of the pipeline the stored arrays verbatim: the
+    /// affinity graph, the initialization and MLX's PRNG stream are bit-identical to the
+    /// internally-built path, and the optimizer's own (pre-existing, scatter-add) run-to-
+    /// run variation is unchanged either way. The graph must match
+    /// ``TSNE/knnGraphSpec(nSamples:)``; prefer ``TSNE/fitTransform(_:knnGraph:)``,
+    /// which validates and throws, over setting this directly (a mismatch here traps).
+    public var knnGraph: KNNGraph?
+
+    /// Capture the k-NN graph `fitTransform` used into ``TSNE/lastKNNGraph``.
+    ///
+    /// Off by default: capturing copies the `(n, k)` index and distance planes to the
+    /// host. Turn it on for the run that fills a cache.
+    public var exportKNNGraph: Bool = false
+
+    /// The k-NN graph the most recent `fitTransform` used, when ``TSNE/exportKNNGraph``
+    /// was set. Serialize it with ``KNNGraph/serialized()`` to cache it.
+    public private(set) var lastKNNGraph: KNNGraph?
+
     public init(
         nComponents: Int = 2,
         perplexity: Float = 30.0,
@@ -75,6 +96,45 @@ public final class TSNE {
         onPhase?(s)
     }
 
+    /// The k-NN build this configuration will run for `nSamples` points.
+    ///
+    /// Use it to key a k-NN cache, and to preflight a ``KNNGraph`` before injecting it.
+    ///
+    /// - Parameter n: Number of input rows.
+    /// - Returns: The resolved search method, neighbour count, distance convention and
+    ///   seed this instance will use.
+    public func knnGraphSpec(nSamples n: Int) -> KNNGraphSpec {
+        KNNGraphSpec(
+            n: n, k: min(Int(3 * perplexity), n - 1), method: knnMethod,
+            distanceKind: .squared, randomState: randomState)
+    }
+
+    /// Fit using a precomputed k-NN graph, skipping the neighbour search.
+    ///
+    /// - Parameters:
+    ///   - x: Input data `(nSamples, nFeatures)`.
+    ///   - graph: A graph matching ``TSNE/knnGraphSpec(nSamples:)``, e.g. one exported
+    ///     from an earlier fit via ``TSNE/exportKNNGraph``.
+    /// - Returns: The embedding `(nSamples, nComponents)`.
+    /// - Throws: A ``KNNGraphError`` if `graph` does not match this configuration; the
+    ///   graph is never truncated or converted to make it fit.
+    public func fitTransform(_ x: MLXArray, knnGraph graph: KNNGraph) throws -> MLXArray {
+        try graph.validate(against: knnGraphSpec(nSamples: x.dim(0)))
+        let saved = knnGraph
+        self.knnGraph = graph
+        defer { self.knnGraph = saved }
+        return fitTransform(x)
+    }
+
+    /// Relays NNDescent's per-iteration convergence measure to ``TSNE/onPhase``.
+    /// `nil` — and therefore free — when nothing is listening.
+    private var knnProgressHook: KNNProgressHandler? {
+        guard verbose > 0 || onPhase != nil else { return nil }
+        return { [self] iteration, total, frac in
+            log(knnProgressLine(iteration: iteration, total: total, updatedFraction: frac))
+        }
+    }
+
     /// Fit t-SNE and return the embedding `(nSamples, nComponents)`.
     public func fitTransform(_ x0: MLXArray) -> MLXArray {
         let xMx = normalizeInput(x0.asType(.float32), method: normalize)
@@ -89,11 +149,12 @@ public final class TSNE {
             xForKNN = xMx
         }
 
-        let k = min(Int(3 * perplexity), n - 1)
         log("Computing k-NN...")
-        let (knnIndices, knnDists) = computeKNN(
-            xForKNN, k: k, method: knnMethod,
-            returnEuclidean: false, randomState: randomState, verbose: verbose > 0)
+        let knn = resolveKNN(
+            xForKNN, spec: knnGraphSpec(nSamples: n), graph: knnGraph, export: exportKNNGraph,
+            verbose: verbose > 0, onIteration: knnProgressHook)
+        lastKNNGraph = knn.exported
+        let (knnIndices, knnDists) = (knn.indices, knn.distances)
 
         log("Building affinity graph...")
         let (edgeFrom, edgeTo, edgeWeights) = buildPMatrix(knnIndices, knnDists, perplexity: perplexity, n: n)

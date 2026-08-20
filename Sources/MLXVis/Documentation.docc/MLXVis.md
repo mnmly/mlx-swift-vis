@@ -47,6 +47,26 @@ previews). It cannot interrupt an in-flight MLX evaluation, so a long setup step
 the KNN build in particular — runs to completion before the check takes effect;
 cancelling during setup returns the initial embedding once that step finishes.
 
+### Reusing the k-NN graph
+
+The neighbour search is the setup step that dominates large fits, and it only changes
+when the data, `k`, the search method or the seed changes. Export it once and inject it
+into later fits to skip it entirely — the optimization itself still runs in full, so
+``UMAP/onEpoch`` previews are unaffected (they just start sooner).
+
+```swift
+let umap = UMAP(nComponents: 2, nNeighbors: 15, randomState: 42)
+
+umap.exportKNNGraph = true                       // cache miss: build and keep it
+let y = umap.fitTransform(x)
+let cached = umap.lastKNNGraph!
+
+let y2 = try umap.fitTransform(x, knnGraph: cached)   // cache hit: no KNN build
+```
+
+While a build does run, ``UMAP/onPhase`` reports its convergence per iteration
+("KNN: iter 4/20 · 2.1% updating"). See ``KNNGraph``.
+
 ## Topics
 
 ### Manifold learning
@@ -62,10 +82,23 @@ cancelling during setup returns the initial embedding once that step finishes.
 
 ### Nearest neighbors
 
-- ``computeKNN(_:k:method:returnEuclidean:randomState:verbose:)``
+- ``computeKNN(_:k:method:returnEuclidean:randomState:verbose:onIteration:)``
 - ``KNNMethod``
 - ``NNDescent``
 - ``bruteForceKNN(_:k:returnEuclidean:)``
+- ``KNNProgressHandler``
+
+### Caching the k-NN graph
+
+The neighbour search dominates the wall clock for large inputs, and it depends only on
+the data, `k`, the search method and the seed — never on an optimizer knob. Build it
+once, cache it, and hand it back on later fits.
+
+- ``KNNGraph``
+- ``KNNGraphSpec``
+- ``KNNDistanceKind``
+- ``KNNGraphError``
+- ``computeKNNGraph(_:k:method:returnEuclidean:randomState:verbose:onIteration:)``
 
 ### Preprocessing
 

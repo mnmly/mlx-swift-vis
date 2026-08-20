@@ -36,6 +36,18 @@ public final class NNDescent {
     /// magnitudes. Set `false` to force the exact fp32 gather. See PORTING_NOTES.
     public var useFP16Dists: Bool = true
 
+    /// Optional per-iteration progress hook, called with
+    /// `(iteration, totalIterations, updatedFraction)`.
+    ///
+    /// `updatedFraction` is the share of the `n * k` neighbour slots that changed in
+    /// that iteration — the descent's own convergence measure, already computed every
+    /// iteration for the `delta` stopping test, so the hook adds no work. It falls from
+    /// ~1.0 towards `delta` (0.015) and the build stops once it drops below; a UI can
+    /// render it directly ("KNN: iter 4 · 2.1% updating"). Fires once with iteration `0`
+    /// and fraction `1.0` right after the random initialization, so the longest single
+    /// step — the first candidate gather — is not silent. No-op when unset.
+    public var onIteration: KNNProgressHandler?
+
     public init(k: Int, randomState: Int = 42, verbose: Bool = false) {
         self.k = k
         self.nIters = 20
@@ -81,6 +93,9 @@ public final class NNDescent {
 
         var updateFrac: Float = 1.0
         let rowVec = MLXArray(Int32(0) ..< Int32(n)).expandedDimensions(axis: 1)  // (n,1)
+
+        // Announce the graph exists before the first (widest, slowest) join iteration.
+        onIteration?(0, nIters, 1.0)
 
         for it in 0 ..< nIters {
             // Source breadth scales with how much the graph is still changing.
@@ -130,6 +145,7 @@ public final class NNDescent {
             if verbose {
                 print("Iter \(it + 1)/\(nIters): \(changed) updates (\(updateFrac))")
             }
+            onIteration?(it + 1, nIters, updateFrac)
             if updateFrac < delta {
                 if verbose { print("Converged at iteration \(it + 1)") }
                 break

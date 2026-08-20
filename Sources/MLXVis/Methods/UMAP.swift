@@ -80,6 +80,27 @@ public final class UMAP {
     /// pre-optimization work to a UI. Fires regardless of `verbose`; no-op when unset.
     public var onPhase: ((String) -> Void)?
 
+    /// A precomputed k-NN graph to use instead of building one.
+    ///
+    /// Skips the neighbour search — the step that dominates the wall clock for large
+    /// inputs — and feeds the rest of the pipeline the stored arrays verbatim: the
+    /// affinity graph, the initialization and MLX's PRNG stream are bit-identical to the
+    /// internally-built path, and the optimizer's own (pre-existing, scatter-add) run-to-
+    /// run variation is unchanged either way. The graph must match
+    /// ``UMAP/knnGraphSpec(nSamples:)``; prefer ``UMAP/fitTransform(_:knnGraph:)``,
+    /// which validates and throws, over setting this directly (a mismatch here traps).
+    public var knnGraph: KNNGraph?
+
+    /// Capture the k-NN graph `fitTransform` used into ``UMAP/lastKNNGraph``.
+    ///
+    /// Off by default: capturing copies the `(n, k)` index and distance planes to the
+    /// host. Turn it on for the run that fills a cache.
+    public var exportKNNGraph: Bool = false
+
+    /// The k-NN graph the most recent `fitTransform` used, when ``UMAP/exportKNNGraph``
+    /// was set. Serialize it with ``KNNGraph/serialized()`` to cache it.
+    public private(set) var lastKNNGraph: KNNGraph?
+
     public init(
         nComponents: Int = 2,
         nNeighbors: Int = 15,
@@ -115,6 +136,45 @@ public final class UMAP {
         onPhase?(s)
     }
 
+    /// The k-NN build this configuration will run for `nSamples` points.
+    ///
+    /// Use it to key a k-NN cache, and to preflight a ``KNNGraph`` before injecting it.
+    ///
+    /// - Parameter n: Number of input rows.
+    /// - Returns: The resolved search method, neighbour count, distance convention and
+    ///   seed this instance will use.
+    public func knnGraphSpec(nSamples n: Int) -> KNNGraphSpec {
+        KNNGraphSpec(
+            n: n, k: nNeighbors, method: knnMethod,
+            distanceKind: .euclidean, randomState: randomState)
+    }
+
+    /// Fit using a precomputed k-NN graph, skipping the neighbour search.
+    ///
+    /// - Parameters:
+    ///   - x: Input data `(nSamples, nFeatures)`.
+    ///   - graph: A graph matching ``UMAP/knnGraphSpec(nSamples:)``, e.g. one exported
+    ///     from an earlier fit via ``UMAP/exportKNNGraph``.
+    /// - Returns: The embedding `(nSamples, nComponents)`.
+    /// - Throws: A ``KNNGraphError`` if `graph` does not match this configuration; the
+    ///   graph is never truncated or converted to make it fit.
+    public func fitTransform(_ x: MLXArray, knnGraph graph: KNNGraph) throws -> MLXArray {
+        try graph.validate(against: knnGraphSpec(nSamples: x.dim(0)))
+        let saved = knnGraph
+        self.knnGraph = graph
+        defer { self.knnGraph = saved }
+        return fitTransform(x)
+    }
+
+    /// Relays NNDescent's per-iteration convergence measure to ``UMAP/onPhase``.
+    /// `nil` — and therefore free — when nothing is listening.
+    private var knnProgressHook: KNNProgressHandler? {
+        guard verbose || onPhase != nil else { return nil }
+        return { [self] iteration, total, frac in
+            log(knnProgressLine(iteration: iteration, total: total, updatedFraction: frac))
+        }
+    }
+
     /// Fit UMAP and return the embedding `(nSamples, nComponents)`.
     public func fitTransform(_ x0: MLXArray) -> MLXArray {
         var x = normalizeInput(x0.asType(.float32), method: normalize)
@@ -132,9 +192,11 @@ public final class UMAP {
         x = xForKNN
 
         log("Computing nearest neighbors...")
-        let (knnIndices, knnDists) = computeKNN(
-            x, k: nNeighbors, method: knnMethod,
-            returnEuclidean: true, randomState: randomState, verbose: verbose)
+        let knn = resolveKNN(
+            x, spec: knnGraphSpec(nSamples: n), graph: knnGraph, export: exportKNNGraph,
+            verbose: verbose, onIteration: knnProgressHook)
+        lastKNNGraph = knn.exported
+        let (knnIndices, knnDists) = (knn.indices, knn.distances)
 
         let epochs = nEpochs ?? (n <= 10000 ? 500 : 200)
         self.nEpochs = epochs

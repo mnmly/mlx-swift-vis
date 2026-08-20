@@ -74,6 +74,47 @@ final class BenchmarkTests: XCTestCase {
         XCTAssertFalse(nan, "FFT path produced NaN")
     }
 
+    /// Quantify the k-NN cache: how much of a fit's wall clock is the neighbour search,
+    /// and how much of it a precomputed ``KNNGraph`` removes.
+    ///
+    /// Set `MLXVIS_BIG_BENCH=1` to add a 100k x 1024 case (needs ~64 GB headroom).
+    func testKNNGraphCacheSpeedup() {
+        var sizes: [(Int, Int)] = [(30_000, 256)]
+        if ProcessInfo.processInfo.environment["MLXVIS_BIG_BENCH"] == "1" {
+            sizes.append((100_000, 1024))
+        }
+        for (n, d) in sizes {
+            let x = data(n, d)
+            eval(x)
+            let k = 15
+
+            func umap() -> UMAP {
+                UMAP(nComponents: 2, nNeighbors: k, nEpochs: 200, randomState: 42,
+                     knnMethod: .nndescent)
+            }
+
+            var graph: KNNGraph?
+            let tKNN = seconds {
+                graph = computeKNNGraph(x, k: k, method: .nndescent, randomState: 42)
+            }
+            guard let graph else { XCTFail("no graph"); return }
+
+            let tBuild = seconds { eval(umap().fitTransform(x)) }
+            let tInject = seconds {
+                eval(try! umap().fitTransform(x, knnGraph: graph))
+            }
+
+            let bytes = graph.serializedByteCount
+            print(String(
+                format: "KNN cache @%dx%d (k=%d): KNN build %.2fs | fit w/ build %.2fs"
+                    + " | fit w/ cached graph %.2fs | saved %.2fs (%.1f%%) | graph %.1f MB",
+                n, d, k, tKNN, tBuild, tInject, tBuild - tInject,
+                (tBuild - tInject) / tBuild * 100, Double(bytes) / 1e6))
+
+            XCTAssertLessThan(tInject, tBuild, "cached graph did not save time at n=\(n)")
+        }
+    }
+
     /// Run `work` `iters` times, clearing the cache between runs, and return the
     /// post-clear `activeMemory` sample after each run.
     private func activeMemorySamples(iters: Int, _ work: () -> Void) -> [Int] {

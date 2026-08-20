@@ -43,6 +43,27 @@ public class PaCMAP {
     /// a UI. Fires regardless of `verbose`; no-op when unset. Inherited by `LocalMAP`.
     public var onPhase: ((String) -> Void)?
 
+    /// A precomputed k-NN graph to use instead of building one.
+    ///
+    /// Skips the neighbour search — the step that dominates the wall clock for large
+    /// inputs — and feeds the rest of the pipeline the stored arrays verbatim: the
+    /// affinity graph, the initialization and MLX's PRNG stream are bit-identical to the
+    /// internally-built path, and the optimizer's own (pre-existing, scatter-add) run-to-
+    /// run variation is unchanged either way. The graph must match
+    /// ``PaCMAP/knnGraphSpec(nSamples:)``; prefer ``PaCMAP/fitTransform(_:knnGraph:)``,
+    /// which validates and throws, over setting this directly (a mismatch here traps).
+    public var knnGraph: KNNGraph?
+
+    /// Capture the k-NN graph `fitTransform` used into ``PaCMAP/lastKNNGraph``.
+    ///
+    /// Off by default: capturing copies the `(n, k)` index and distance planes to the
+    /// host. Turn it on for the run that fills a cache.
+    public var exportKNNGraph: Bool = false
+
+    /// The k-NN graph the most recent `fitTransform` used, when ``PaCMAP/exportKNNGraph``
+    /// was set. Serialize it with ``KNNGraph/serialized()`` to cache it.
+    public private(set) var lastKNNGraph: KNNGraph?
+
     // Set during preprocessing: true if PCA reduction to 100 dims was applied.
     fileprivate var pcaSolution = false
 
@@ -77,6 +98,45 @@ public class PaCMAP {
         let s = msg()
         if verbose { print(s) }
         onPhase?(s)
+    }
+
+    /// The k-NN build this configuration will run for `nSamples` points.
+    ///
+    /// Use it to key a k-NN cache, and to preflight a ``KNNGraph`` before injecting it.
+    ///
+    /// - Parameter n: Number of input rows.
+    /// - Returns: The resolved search method, neighbour count, distance convention and
+    ///   seed this instance will use.
+    public func knnGraphSpec(nSamples n: Int) -> KNNGraphSpec {
+        KNNGraphSpec(
+            n: n, k: min(n - 1, decideNumPairs(n).0 + 50), method: knnMethod,
+            distanceKind: .euclidean, randomState: randomState)
+    }
+
+    /// Fit using a precomputed k-NN graph, skipping the neighbour search.
+    ///
+    /// - Parameters:
+    ///   - x: Input data `(nSamples, nFeatures)`.
+    ///   - graph: A graph matching ``PaCMAP/knnGraphSpec(nSamples:)``, e.g. one exported
+    ///     from an earlier fit via ``PaCMAP/exportKNNGraph``.
+    /// - Returns: The embedding `(nSamples, nComponents)`.
+    /// - Throws: A ``KNNGraphError`` if `graph` does not match this configuration; the
+    ///   graph is never truncated or converted to make it fit.
+    public func fitTransform(_ x: MLXArray, knnGraph graph: KNNGraph) throws -> MLXArray {
+        try graph.validate(against: knnGraphSpec(nSamples: x.dim(0)))
+        let saved = knnGraph
+        self.knnGraph = graph
+        defer { self.knnGraph = saved }
+        return fitTransform(x)
+    }
+
+    /// Relays NNDescent's per-iteration convergence measure to ``PaCMAP/onPhase``.
+    /// `nil` — and therefore free — when nothing is listening.
+    private var knnProgressHook: KNNProgressHandler? {
+        guard verbose || onPhase != nil else { return nil }
+        return { [self] iteration, total, frac in
+            log(knnProgressLine(iteration: iteration, total: total, updatedFraction: frac))
+        }
     }
 
     /// Fit PaCMAP and return the embedding `(nSamples, nComponents)`.
@@ -410,10 +470,11 @@ public class PaCMAP {
 
         // KNN (extra neighbours for scaled-distance reselection).
         log("Computing KNN...")
-        let knnK = min(n - 1, nNeighborsLocal + 50)
-        let (knnIndices, knnDistances) = computeKNN(
-            xProc, k: knnK, method: knnMethod,
-            returnEuclidean: true, randomState: randomState, verbose: verbose)
+        let knn = resolveKNN(
+            xProc, spec: knnGraphSpec(nSamples: n), graph: knnGraph, export: exportKNNGraph,
+            verbose: verbose, onIteration: knnProgressHook)
+        lastKNNGraph = knn.exported
+        let (knnIndices, knnDistances) = (knn.indices, knn.distances)
 
         // Sample pairs.
         log("Sampling neighbour pairs...")
